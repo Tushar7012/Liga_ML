@@ -3,15 +3,11 @@ import { createRoot } from 'react-dom/client';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import App from './App';
-import { darkTheme, lightTheme } from './theme';
-import { useLayoutStore } from './store/layoutStore';
+import { lightTheme } from './theme';
 
 function Root() {
-  const themeMode = useLayoutStore((s) => s.themeMode);
-  const theme = themeMode === 'light' ? lightTheme : darkTheme;
-
   return (
-    <ThemeProvider theme={theme}>
+    <ThemeProvider theme={lightTheme}>
       <CssBaseline />
       <App />
     </ThemeProvider>

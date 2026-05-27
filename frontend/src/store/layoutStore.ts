@@ -22,16 +22,13 @@ export const useLayoutStore = create<LayoutStore>()(
       isLeftSidebarOpen: true,
       isRightPanelOpen: false,
       rightPanelWidth: 450,
-      themeMode: 'dark' as ThemeMode,
+      themeMode: 'light' as ThemeMode,
       setLeftSidebarOpen: (open) => set({ isLeftSidebarOpen: open }),
       setRightPanelOpen: (open) => set({ isRightPanelOpen: open }),
       setRightPanelWidth: (width) => set({ rightPanelWidth: width }),
       toggleLeftSidebar: () => set((state) => ({ isLeftSidebarOpen: !state.isLeftSidebarOpen })),
       toggleRightPanel: () => set((state) => ({ isRightPanelOpen: !state.isRightPanelOpen })),
-      toggleTheme: () =>
-        set((state) => ({
-          themeMode: state.themeMode === 'dark' ? 'light' : 'dark',
-        })),
+      toggleTheme: () => set({ themeMode: 'light' }),
     }),
     {
       name: 'hf-agent-layout',

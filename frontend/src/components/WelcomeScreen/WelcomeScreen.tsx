@@ -15,7 +15,7 @@ import { useAgentStore } from '@/store/agentStore';
 import { apiFetch } from '@/utils/api';
 import { isInIframe, triggerLogin } from '@/hooks/useAuth';
 
-const HF_ORANGE = '#FF9D00';
+const BRAND_GREEN = '#00D084';
 
 // ---------------------------------------------------------------------------
 // ChecklistStep sub-component
@@ -53,7 +53,7 @@ function StepIndicator({ status, stepNumber }: { status: StepStatus; stepNumber:
         fontSize: '0.8rem',
         fontWeight: 700,
         ...(status === 'active'
-          ? { bgcolor: HF_ORANGE, color: '#000' }
+          ? { bgcolor: BRAND_GREEN, color: '#062B1D' }
           : { bgcolor: 'transparent', border: '2px solid var(--border)', color: 'var(--muted-text)' }),
       }}
     >
@@ -86,10 +86,10 @@ function ChecklistStep({
     textDecoration: 'none',
     ...(status === 'active'
       ? {
-          bgcolor: HF_ORANGE,
-          color: '#000',
-          boxShadow: '0 2px 12px rgba(255, 157, 0, 0.25)',
-          '&:hover': { bgcolor: '#FFB340', boxShadow: '0 4px 20px rgba(255, 157, 0, 0.4)' },
+          bgcolor: BRAND_GREEN,
+          color: '#062B1D',
+          boxShadow: '0 2px 12px rgba(0, 208, 132, 0.2)',
+          '&:hover': { bgcolor: 'var(--accent-green)', boxShadow: '0 4px 20px rgba(0, 208, 132, 0.28)' },
         }
       : {
           bgcolor: 'rgba(255,255,255,0.04)',
@@ -111,7 +111,7 @@ function ChecklistStep({
           status === 'completed'
             ? 'var(--accent-green)'
             : status === 'active'
-              ? HF_ORANGE
+              ? BRAND_GREEN
               : 'transparent',
         ...(!isLast && { borderBottom: '1px solid var(--border)' }),
         opacity: status === 'locked' ? 0.55 : 1,
@@ -224,7 +224,7 @@ export default function WelcomeScreen() {
   const signInStatus: StepStatus = isAuthenticated ? 'completed' : 'active';
   const startStatus: StepStatus = isAuthenticated ? 'active' : 'locked';
 
-  // Space URL for iframe "Open ML Intern" step
+  // Space URL for iframe "Open Liga ML Intern" step
   const spaceHost =
     typeof window !== 'undefined'
       ? window.location.hostname.includes('.hf.space')
@@ -263,8 +263,8 @@ export default function WelcomeScreen() {
         {/* Logo */}
         <Box
           component="img"
-          src="/smolagents.webp"
-          alt="smolagents"
+          src="/liga-ml-logo.png"
+          alt="Liga ML Intern"
           sx={{ width: 80, height: 80, mb: 2.5, display: 'block' }}
         />
 
@@ -279,7 +279,7 @@ export default function WelcomeScreen() {
             fontSize: { xs: '1.8rem', md: '2.4rem' },
           }}
         >
-          ML Intern
+          Liga ML Intern
         </Typography>
 
         {/* Description */}
@@ -328,10 +328,10 @@ export default function WelcomeScreen() {
             /* Iframe: open in a full tab */
             <ChecklistStep
               stepNumber={1}
-              title="Open ML Intern"
+              title="Open Liga ML Intern"
               description="Open the agent in a full browser tab to get started."
               status="active"
-              actionLabel="Open ML Intern"
+              actionLabel="Open Liga ML Intern"
               actionIcon={<OpenInNewIcon sx={{ fontSize: 16 }} />}
               actionHref={spaceHost}
               isLast
@@ -374,7 +374,7 @@ export default function WelcomeScreen() {
               mt: 3,
               maxWidth: 400,
               fontSize: '0.8rem',
-              borderColor: HF_ORANGE,
+              borderColor: 'var(--accent-yellow)',
               color: 'var(--text)',
             }}
           >

@@ -244,13 +244,11 @@ function spaceIdToSubdomain(spaceId: string): string {
 }
 
 function buildTrackioEmbedUrl(spaceId: string, project?: string): string {
-  // __theme=dark is gradio's standard query param to force the embedded
-  // dashboard into dark mode so it blends with the surrounding chat instead
-  // of flashing a bright white panel inside the dark UI.
+  // Keep embedded dashboards aligned with the light Liga ML theme.
   const params = new URLSearchParams({
     sidebar: 'hidden',
     footer: 'false',
-    __theme: 'dark',
+    __theme: 'light',
   });
   if (project) params.set('project', project);
   return `https://${spaceIdToSubdomain(spaceId)}.hf.space/?${params.toString()}`;

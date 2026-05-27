@@ -105,7 +105,7 @@ export default function UserMessage({
                   color: 'var(--muted-text)',
                   '&:hover': {
                     color: 'var(--accent-yellow)',
-                    bgcolor: 'rgba(255,157,0,0.08)',
+                    bgcolor: 'var(--accent-yellow-weak)',
                   },
                 }}
               >

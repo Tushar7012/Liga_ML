@@ -72,13 +72,14 @@ DATASET_UPLOAD_MULTIPART_SLACK_BYTES = 1024 * 1024
 def _claude_picker_model_id() -> str:
     """Return the model ID used by the Claude option in the UI.
 
-    The frontend config sets ``session_manager.config.model_name`` from
-    ``ML_INTERN_CLAUDE_MODEL_ID`` when that env var is present, otherwise it
-    falls back to the production Bedrock Claude model. This function only
-    exposes that resolved config value for the Claude picker; non-Claude models
-    are listed separately in the model switcher.
+    The app default may be Kimi, so only mirror the resolved config when it is
+    actually an Anthropic/Bedrock model. Otherwise keep the Claude picker wired
+    to the premium Claude default instead of duplicating the Kimi option.
     """
-    return session_manager.config.model_name
+    configured_model = session_manager.config.model_name
+    if "anthropic" in configured_model:
+        return configured_model
+    return DEFAULT_CLAUDE_MODEL_ID
 
 
 def _available_models() -> list[dict[str, Any]]:

@@ -14,8 +14,6 @@ import {
 import MenuIcon from '@mui/icons-material/Menu';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
-import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined';
-import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined';
 
 import { useSessionStore } from '@/store/sessionStore';
 import { useAgentStore } from '@/store/agentStore';
@@ -36,11 +34,9 @@ export default function AppLayout() {
     isLeftSidebarOpen,
     isRightPanelOpen,
     rightPanelWidth,
-    themeMode,
     setRightPanelWidth,
     setLeftSidebarOpen,
     toggleLeftSidebar,
-    toggleTheme,
   } = useLayoutStore();
 
   const theme = useTheme();
@@ -268,8 +264,8 @@ export default function AppLayout() {
           <Box sx={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 0.75 }}>
             <Box
               component="img"
-              src="/smolagents.webp"
-              alt="smolagents"
+              src="/liga-ml-logo.png"
+              alt="Liga ML Intern"
               sx={{ width: { xs: 20, md: 22 }, height: { xs: 20, md: 22 } }}
             />
             <Typography
@@ -281,22 +277,12 @@ export default function AppLayout() {
                 fontSize: { xs: '0.88rem', md: '0.95rem' },
               }}
             >
-              ML Intern
+              Liga ML Intern
             </Typography>
           </Box>
 
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
             <YoloControl />
-            <IconButton
-              onClick={toggleTheme}
-              size="small"
-              sx={{
-                color: 'text.secondary',
-                '&:hover': { color: 'primary.main' },
-              }}
-            >
-              {themeMode === 'dark' ? <LightModeOutlinedIcon fontSize="small" /> : <DarkModeOutlinedIcon fontSize="small" />}
-            </IconButton>
 
             {user?.picture ? (
               <Avatar

@@ -171,7 +171,7 @@ export default function SessionSidebar({ onClose }: SessionSidebarProps) {
             fontSize: '0.7rem',
             py: 0.25,
             '& .MuiAlert-message': { py: 0 },
-            borderColor: '#FF9D00',
+            borderColor: 'var(--accent-yellow)',
             color: 'var(--text)',
           }}
         >
@@ -355,14 +355,14 @@ export default function SessionSidebar({ onClose }: SessionSidebarProps) {
             py: 1.25,
             border: 'none',
             borderRadius: '10px',
-            bgcolor: '#FF9D00',
-            color: '#000',
+            bgcolor: 'var(--accent-yellow)',
+            color: '#062B1D',
             fontSize: '0.85rem',
             fontWeight: 700,
             cursor: 'pointer',
             transition: 'all 0.12s ease',
             '&:hover': {
-              bgcolor: '#FFB340',
+              bgcolor: 'var(--accent-green)',
             },
             '&:disabled': {
               opacity: 0.5,
@@ -372,7 +372,7 @@ export default function SessionSidebar({ onClose }: SessionSidebarProps) {
         >
           {isCreatingSession ? (
             <>
-              <CircularProgress size={12} sx={{ color: '#000' }} />
+              <CircularProgress size={12} sx={{ color: '#062B1D' }} />
               Creating...
             </>
           ) : (
