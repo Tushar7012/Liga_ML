@@ -1,0 +1,55 @@
+.git
+.gitignore
+.dockerignore
+
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+credentials*.json
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+ENV/
+env/
+build/
+dist/
+*.egg-info/
+
+# Frontend build artifacts and dependencies
+frontend/node_modules/
+frontend/dist/
+frontend/.cache/
+frontend/.eslintcache
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/tsconfig.tsbuildinfo
+
+# Local/generated project data
+logs/
+session_logs/
+scratch/
+data/
+datasets/
+models/
+checkpoint-*/
+runs/
+wandb/
+hf-agent-leaderboard/
+*.jsonl
+*.csv
+
+# IDE and OS files
+.cursor/
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

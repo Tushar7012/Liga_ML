@@ -2,7 +2,7 @@
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm install
+RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
@@ -24,16 +24,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency files
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 
-# Install dependencies into /app/.venv
-# Use --frozen to ensure exact versions from uv.lock
-RUN uv sync --no-dev --frozen
+# Install dependencies into /app/.venv first; install the local package after source is copied.
+RUN uv sync --no-dev --frozen --no-install-project
 
 # Copy application code
 COPY agent/ ./agent/
 COPY backend/ ./backend/
 COPY configs/ ./configs/
+
+# Install the local package now that package sources are present.
+RUN uv sync --no-dev --frozen
 
 # Copy built frontend
 COPY --from=frontend-builder /app/frontend/dist ./static/
@@ -51,8 +53,8 @@ ENV HOME=/home/user \
     PYTHONPATH=/app \
     PATH="/app/.venv/bin:$PATH"
 
-# Expose port
-EXPOSE 7860
+# Cloud Run provides PORT at runtime. The app also falls back to 7860 for local/HF Spaces use.
+EXPOSE 8080
 
 # Run the application from backend directory
 WORKDIR /app/backend
