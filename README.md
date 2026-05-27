@@ -230,3 +230,7 @@ Edit `configs/cli_agent_config.json` or `configs/frontend_agent_config.json`:
 ```
 
 Note: Environment variables like `${YOUR_TOKEN}` are auto-substituted from `.env`.
+
+## License
+
+MIT License
