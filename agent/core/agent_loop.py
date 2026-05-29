@@ -2060,6 +2060,23 @@ async def process_submission(session: Session, submission) -> bool:
 
     if op.op_type == OpType.USER_INPUT:
         text = op.data.get("text", "") if op.data else ""
+        cloud_provider = op.data.get("cloud_provider") if op.data else None
+        if cloud_provider in {"hf-jobs", "gcp-vertex"}:
+            provider_label = (
+                "Google Cloud Vertex AI (use gcp_vertex_jobs for training jobs)"
+                if cloud_provider == "gcp-vertex"
+                else "Hugging Face Jobs (use hf_jobs for training jobs)"
+            )
+            session.context_manager.add_message(
+                Message(
+                    role="user",
+                    content=(
+                        "[SYSTEM: The frontend training provider selector for "
+                        f"this session is set to {provider_label}. Prefer that "
+                        "backend when the user asks to fine-tune or run training.]"
+                    ),
+                )
+            )
         await Handlers.run_agent(session, text)
         return True
 

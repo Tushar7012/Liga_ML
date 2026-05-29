@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+CloudProviderId = Literal["hf-jobs", "gcp-vertex"]
+
 
 class OpType(str, Enum):
     """Operation types matching agent/core/agent_loop.py."""
@@ -56,6 +58,7 @@ class SubmitRequest(BaseModel):
     # or runaway client could otherwise attach megabytes that then ride along
     # in every subsequent turn until /api/compact is called.
     text: str = Field(..., min_length=1, max_length=100_000)
+    cloud_provider: CloudProviderId | None = None
 
 
 class TruncateRequest(BaseModel):
@@ -70,6 +73,7 @@ class SessionResponse(BaseModel):
     session_id: str
     ready: bool = True
     model: str | None = None
+    cloud_provider: CloudProviderId = "hf-jobs"
 
 
 class PendingApprovalTool(BaseModel):
@@ -100,6 +104,7 @@ class SessionInfo(BaseModel):
     user_id: str = "dev"
     pending_approval: list[PendingApprovalTool] | None = None
     model: str | None = None
+    cloud_provider: CloudProviderId = "hf-jobs"
     title: str | None = None
     notification_destinations: list[str] = Field(default_factory=list)
     auto_approval: SessionAutoApprovalInfo = Field(

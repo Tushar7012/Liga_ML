@@ -9,7 +9,9 @@ import type { ChatTransport, UIMessage, UIMessageChunk, ChatRequestOptions } fro
 import { apiFetch } from '@/utils/api';
 import { logger } from '@/utils/logger';
 import type { AgentEvent } from '@/types/events';
+import type { ToolStateChangeEventData } from '@/types/events';
 import { useAgentStore } from '@/store/agentStore';
+import { useSessionStore } from '@/store/sessionStore';
 
 // ---------------------------------------------------------------------------
 // Side-channel callback interface (non-chat events forwarded to the store)
@@ -37,6 +39,7 @@ export interface SideChannelCallbacks {
   }>) => void;
   onToolCallPanel: (tool: string, args: Record<string, unknown>) => void;
   onToolOutputPanel: (tool: string, toolCallId: string, output: string, success: boolean) => void;
+  onToolStateChange: (state: ToolStateChangeEventData) => void;
   onStreaming: () => void;
   onToolRunning: (toolName: string, description?: string) => void;
   onInterrupted: () => void;
@@ -277,6 +280,19 @@ function createEventToChunkStream(sideChannel: SideChannelCallbacks): TransformS
           if (jobUrl && tcId) {
             useAgentStore.getState().setJobUrl(tcId, jobUrl);
           }
+          if (tcId) {
+            sideChannel.onToolStateChange({
+              tool: toolName,
+              tool_call_id: tcId,
+              state,
+              jobName: (event.data?.jobName as string) || undefined,
+              jobUrl,
+              outputDir: (event.data?.outputDir as string) || undefined,
+              trackioSpaceId,
+              trackioProject,
+              namespace: (event.data?.namespace as string) || undefined,
+            });
+          }
           if (trackioSpaceId && tcId) {
             useAgentStore.getState().setTrackioDashboard(tcId, trackioSpaceId, trackioProject);
           }
@@ -394,7 +410,10 @@ export class SSEChatTransport implements ChatTransport<UIMessage> {
             .map(p => p.text)
             .join('')
         : '';
-      body = { text };
+      const cloudProvider = useSessionStore
+        .getState()
+        .sessions.find((session) => session.id === sessionId)?.cloudProvider ?? 'hf-jobs';
+      body = { text, cloud_provider: cloudProvider };
     }
 
     // POST to SSE endpoint

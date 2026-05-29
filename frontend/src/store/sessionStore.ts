@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { SessionMeta } from '@/types/agent';
+import type { CloudProviderId, SessionMeta } from '@/types/agent';
 import { deleteMessages, moveMessages } from '@/lib/chat-message-store';
 import { moveBackendMessages, deleteBackendMessages } from '@/lib/backend-message-store';
 
@@ -15,6 +15,7 @@ interface SessionStore {
   setSessionActive: (id: string, isActive: boolean) => void;
   updateSessionTitle: (id: string, title: string) => void;
   updateSessionModel: (id: string, model: string | null) => void;
+  updateSessionCloudProvider: (id: string, provider: CloudProviderId) => void;
   setNeedsAttention: (id: string, needs: boolean) => void;
   /** Mark a session as expired (backend no longer has it). The UI shows a
    *  recovery banner and disables input. */
@@ -35,6 +36,7 @@ interface SessionStore {
       estimated_spend_usd?: number;
       remaining_usd?: number | null;
     } | null;
+    cloud_provider?: CloudProviderId | null;
   }>) => void;
   updateSessionYolo: (id: string, policy: {
     enabled: boolean;
@@ -62,6 +64,7 @@ export const useSessionStore = create<SessionStore>()(
           isActive: true,
           needsAttention: false,
           model: model ?? null,
+          cloudProvider: 'hf-jobs',
           autoApprovalEnabled: false,
           autoApprovalCostCapUsd: null,
           autoApprovalEstimatedSpendUsd: 0,
@@ -118,6 +121,7 @@ export const useSessionStore = create<SessionStore>()(
                 title: server.title || existing.title,
                 isActive: server.is_active ?? existing.isActive,
                 model: server.model ?? existing.model ?? null,
+                cloudProvider: server.cloud_provider ?? existing.cloudProvider ?? 'hf-jobs',
                 needsAttention: Boolean(server.pending_approval?.length) || existing.needsAttention,
                 expired: false,
                 ...(auto
@@ -141,6 +145,7 @@ export const useSessionStore = create<SessionStore>()(
               isActive: server.is_active ?? true,
               needsAttention: Boolean(server.pending_approval?.length),
               model: server.model ?? null,
+              cloudProvider: server.cloud_provider ?? 'hf-jobs',
               expired: false,
               autoApprovalEnabled: Boolean(server.auto_approval?.enabled),
               autoApprovalCostCapUsd: server.auto_approval?.cost_cap_usd ?? null,
@@ -214,6 +219,14 @@ export const useSessionStore = create<SessionStore>()(
         set((state) => ({
           sessions: state.sessions.map((s) =>
             s.id === id ? { ...s, model } : s
+          ),
+        }));
+      },
+
+      updateSessionCloudProvider: (id: string, provider: CloudProviderId) => {
+        set((state) => ({
+          sessions: state.sessions.map((s) =>
+            s.id === id ? { ...s, cloudProvider: provider } : s
           ),
         }));
       },

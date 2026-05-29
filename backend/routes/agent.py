@@ -127,10 +127,17 @@ def _available_models() -> list[dict[str, Any]]:
 
 
 AVAILABLE_MODELS = _available_models()
+VALID_CLOUD_PROVIDERS = {"hf-jobs", "gcp-vertex"}
 
 
 def _is_premium_model(model_id: str) -> bool:
     return model_id in PREMIUM_MODEL_IDS
+
+
+def _cloud_provider_or_default(value: Any) -> str:
+    if value in VALID_CLOUD_PROVIDERS:
+        return str(value)
+    return "hf-jobs"
 
 
 async def _model_override_for_new_session(
@@ -460,12 +467,14 @@ async def create_session(
 
     # Optional model override. Empty body falls back to the config default.
     model: str | None = None
+    cloud_provider = "hf-jobs"
     try:
         body = await request.json()
     except Exception:
         body = None
     if isinstance(body, dict):
         model = body.get("model")
+        cloud_provider = _cloud_provider_or_default(body.get("cloud_provider"))
 
     valid_ids = {m["id"] for m in AVAILABLE_MODELS}
     if model and model not in valid_ids:
@@ -482,6 +491,7 @@ async def create_session(
             hf_token=hf_token,
             model=model,
             is_pro=user.get("plan") == "pro",
+            cloud_provider=cloud_provider,
         )
     except SessionCapacityError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -490,6 +500,7 @@ async def create_session(
         session_id=session_id,
         ready=True,
         model=model or session_manager.config.model_name,
+        cloud_provider=cloud_provider,
     )
 
 
@@ -512,6 +523,7 @@ async def restore_session_summary(
     hf_token = resolve_hf_request_token(request)
 
     model = body.get("model")
+    cloud_provider = _cloud_provider_or_default(body.get("cloud_provider"))
     valid_ids = {m["id"] for m in AVAILABLE_MODELS}
     if model and model not in valid_ids:
         raise HTTPException(status_code=400, detail=f"Unknown model: {model}")
@@ -525,6 +537,7 @@ async def restore_session_summary(
             hf_token=hf_token,
             model=model,
             is_pro=user.get("plan") == "pro",
+            cloud_provider=cloud_provider,
         )
     except SessionCapacityError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -545,6 +558,7 @@ async def restore_session_summary(
         session_id=session_id,
         ready=True,
         model=model or session_manager.config.model_name,
+        cloud_provider=cloud_provider,
     )
 
 
@@ -808,7 +822,9 @@ async def submit_input(
     except ValidationError as exc:
         raise RequestValidationError(exc.errors()) from exc
     await _enforce_premium_model_quota(user, agent_session)
-    success = await session_manager.submit_user_input(body.session_id, body.text)
+    success = await session_manager.submit_user_input(
+        body.session_id, body.text, body.cloud_provider
+    )
     if not success:
         raise HTTPException(status_code=404, detail="Session not found or inactive")
     return {"status": "submitted", "session_id": body.session_id}
@@ -858,6 +874,7 @@ async def chat_sse(
     # Submit the operation
     text = body.get("text")
     approvals = body.get("approvals")
+    cloud_provider = _cloud_provider_or_default(body.get("cloud_provider"))
 
     # Gate user-message sends against the daily premium-model quota. Approvals are
     # continuations of an in-progress turn — the session was already charged
@@ -883,7 +900,9 @@ async def chat_sse(
             ]
             success = await session_manager.submit_approval(session_id, formatted)
         elif text is not None:
-            success = await session_manager.submit_user_input(session_id, text)
+            success = await session_manager.submit_user_input(
+                session_id, text, cloud_provider
+            )
         else:
             broadcaster.unsubscribe(sub_id)
             raise HTTPException(

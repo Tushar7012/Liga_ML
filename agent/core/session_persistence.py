@@ -179,6 +179,7 @@ class MongoSessionStore(NoopSessionStore):
         auto_approval_enabled: bool = False,
         auto_approval_cost_cap_usd: float | None = None,
         auto_approval_estimated_spend_usd: float = 0.0,
+        cloud_provider: str = "hf-jobs",
     ) -> None:
         if not self._ready():
             return
@@ -210,6 +211,7 @@ class MongoSessionStore(NoopSessionStore):
                     "auto_approval_enabled": auto_approval_enabled,
                     "auto_approval_cost_cap_usd": auto_approval_cost_cap_usd,
                     "auto_approval_estimated_spend_usd": auto_approval_estimated_spend_usd,
+                    "cloud_provider": cloud_provider,
                 },
             },
             upsert=True,
@@ -233,6 +235,7 @@ class MongoSessionStore(NoopSessionStore):
         auto_approval_enabled: bool = False,
         auto_approval_cost_cap_usd: float | None = None,
         auto_approval_estimated_spend_usd: float = 0.0,
+        cloud_provider: str = "hf-jobs",
     ) -> None:
         if not self._ready():
             return
@@ -253,6 +256,7 @@ class MongoSessionStore(NoopSessionStore):
             auto_approval_enabled=auto_approval_enabled,
             auto_approval_cost_cap_usd=auto_approval_cost_cap_usd,
             auto_approval_estimated_spend_usd=auto_approval_estimated_spend_usd,
+            cloud_provider=cloud_provider,
         )
         ops: list[Any] = []
         for idx, raw in enumerate(messages):

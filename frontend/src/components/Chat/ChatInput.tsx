@@ -19,6 +19,7 @@ import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import StopIcon from '@mui/icons-material/Stop';
 import AddIcon from '@mui/icons-material/Add';
+import CloudQueueIcon from '@mui/icons-material/CloudQueue';
 import { apiFetch, apiUpload } from '@/utils/api';
 import { useUserQuota } from '@/hooks/useUserQuota';
 import ClaudeCapDialog from '@/components/ClaudeCapDialog';
@@ -32,6 +33,7 @@ import {
   isClaudePath,
   isPremiumPath,
 } from '@/utils/model';
+import type { CloudProviderId } from '@/types/agent';
 
 // Model configuration
 interface ModelOption {
@@ -92,6 +94,23 @@ const DEFAULT_MODEL_OPTIONS: ModelOption[] = [
     description: 'DeepInfra',
     modelPath: 'deepseek-ai/DeepSeek-V4-Pro:deepinfra',
     avatarUrl: getHfAvatarUrl('deepseek-ai/DeepSeek-V4-Pro'),
+  },
+];
+
+const CLOUD_PROVIDER_OPTIONS: Array<{
+  id: CloudProviderId;
+  name: string;
+  description: string;
+}> = [
+  {
+    id: 'hf-jobs',
+    name: 'Hugging Face Jobs',
+    description: 'Run training on Hugging Face infrastructure',
+  },
+  {
+    id: 'gcp-vertex',
+    name: 'Google Cloud Vertex AI',
+    description: 'Run training with the gcp_vertex_jobs backend',
   },
 ];
 
@@ -171,6 +190,7 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
     () => findModelByPath(initialModelPath ?? '', DEFAULT_MODEL_OPTIONS)?.id ?? DEFAULT_MODEL_OPTIONS[0].id,
   );
   const [modelAnchorEl, setModelAnchorEl] = useState<null | HTMLElement>(null);
+  const [providerAnchorEl, setProviderAnchorEl] = useState<null | HTMLElement>(null);
   const { quota, refresh: refreshQuota } = useUserQuota();
   // The daily-cap dialog is triggered from two places: (a) a 429 returned
   // from the chat transport when the user tries to send on a premium model over cap —
@@ -182,6 +202,12 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
   const jobsUpgradeRequired = useAgentStore((s) => s.jobsUpgradeRequired);
   const setJobsUpgradeRequired = useAgentStore((s) => s.setJobsUpgradeRequired);
   const updateSessionModel = useSessionStore((s) => s.updateSessionModel);
+  const updateSessionCloudProvider = useSessionStore((s) => s.updateSessionCloudProvider);
+  const selectedCloudProvider = useSessionStore((s) => (
+    sessionId
+      ? s.sessions.find((session) => session.id === sessionId)?.cloudProvider ?? 'hf-jobs'
+      : 'hf-jobs'
+  ));
   const [awaitingTopUp, setAwaitingTopUp] = useState(false);
   const [modelSwitchError, setModelSwitchError] = useState<string | null>(null);
   const [datasetUploadError, setDatasetUploadError] = useState<string | null>(null);
@@ -240,12 +266,17 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
           if (model) setSelectedModelId(model.id);
           updateSessionModel(sessionId, data.model);
         }
+        if (data?.cloud_provider === 'hf-jobs' || data?.cloud_provider === 'gcp-vertex') {
+          updateSessionCloudProvider(sessionId, data.cloud_provider);
+        }
       })
       .catch(() => { /* ignore */ });
     return () => { cancelled = true; };
-  }, [sessionId, updateSessionModel]);
+  }, [sessionId, updateSessionModel, updateSessionCloudProvider]);
 
   const selectedModel = modelOptions.find(m => m.id === selectedModelId) || modelOptions[0];
+  const selectedProvider = CLOUD_PROVIDER_OPTIONS.find((provider) => provider.id === selectedCloudProvider)
+    ?? CLOUD_PROVIDER_OPTIONS[0];
 
   // Auto-focus the textarea when the session becomes ready
   useEffect(() => {
@@ -368,6 +399,20 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
 
   const handleModelClose = () => {
     setModelAnchorEl(null);
+  };
+
+  const handleProviderClick = (event: React.MouseEvent<HTMLElement>) => {
+    setProviderAnchorEl(event.currentTarget);
+  };
+
+  const handleProviderClose = () => {
+    setProviderAnchorEl(null);
+  };
+
+  const handleSelectProvider = (provider: CloudProviderId) => {
+    handleProviderClose();
+    if (!sessionId) return;
+    updateSessionCloudProvider(sessionId, provider);
   };
 
   const handleSelectModel = async (model: ModelOption) => {
@@ -689,35 +734,61 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
           </Box>
         )}
 
-        {/* Powered By Badge */}
-        <Box
-          onClick={handleModelClick}
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            mt: 1.5,
-            gap: 0.8,
-            opacity: 0.6,
-            cursor: 'pointer',
-            transition: 'opacity 0.2s',
-            '&:hover': {
-              opacity: 1
-            }
-          }}
-        >
-          <Typography variant="caption" sx={{ fontSize: '10px', color: 'var(--muted-text)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 500 }}>
-            powered by
-          </Typography>
-          <img
-            src={selectedModel.avatarUrl}
-            alt={selectedModel.name}
-            style={{ height: '14px', width: '14px', objectFit: 'contain', borderRadius: '2px' }}
-          />
-          <Typography variant="caption" sx={{ fontSize: '10px', color: 'var(--text)', fontWeight: 600, letterSpacing: '0.02em' }}>
-            {selectedModel.name}
-          </Typography>
-          <ArrowDropDownIcon sx={{ fontSize: '14px', color: 'var(--muted-text)' }} />
+        {/* Model and training backend selectors */}
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mt: 1.5, gap: 1.5, flexWrap: 'wrap' }}>
+          <Box
+            onClick={handleModelClick}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 0.8,
+              opacity: 0.6,
+              cursor: 'pointer',
+              transition: 'opacity 0.2s',
+              '&:hover': {
+                opacity: 1
+              }
+            }}
+          >
+            <Typography variant="caption" sx={{ fontSize: '10px', color: 'var(--muted-text)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 500 }}>
+              powered by
+            </Typography>
+            <img
+              src={selectedModel.avatarUrl}
+              alt={selectedModel.name}
+              style={{ height: '14px', width: '14px', objectFit: 'contain', borderRadius: '2px' }}
+            />
+            <Typography variant="caption" sx={{ fontSize: '10px', color: 'var(--text)', fontWeight: 600, letterSpacing: '0.02em' }}>
+              {selectedModel.name}
+            </Typography>
+            <ArrowDropDownIcon sx={{ fontSize: '14px', color: 'var(--muted-text)' }} />
+          </Box>
+
+          <Box
+            onClick={handleProviderClick}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 0.6,
+              opacity: 0.7,
+              cursor: 'pointer',
+              transition: 'opacity 0.2s',
+              '&:hover': {
+                opacity: 1
+              }
+            }}
+          >
+            <Typography variant="caption" sx={{ fontSize: '10px', color: 'var(--muted-text)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 500 }}>
+              training on
+            </Typography>
+            <CloudQueueIcon sx={{ fontSize: '14px', color: selectedCloudProvider === 'gcp-vertex' ? 'var(--accent-yellow)' : 'var(--muted-text)' }} />
+            <Typography variant="caption" sx={{ fontSize: '10px', color: 'var(--text)', fontWeight: 600, letterSpacing: '0.02em' }}>
+              {selectedProvider.name}
+            </Typography>
+            <ArrowDropDownIcon sx={{ fontSize: '14px', color: 'var(--muted-text)' }} />
+          </Box>
         </Box>
 
         {/* Model Selection Menu */}
@@ -796,6 +867,56 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
                   </Box>
                 }
                 secondary={model.description}
+                secondaryTypographyProps={{
+                  sx: { fontSize: '12px', color: 'var(--muted-text)' }
+                }}
+              />
+            </MenuItem>
+          ))}
+        </Menu>
+
+        {/* Training Provider Selection Menu */}
+        <Menu
+          anchorEl={providerAnchorEl}
+          open={Boolean(providerAnchorEl)}
+          onClose={handleProviderClose}
+          anchorOrigin={{
+            vertical: 'top',
+            horizontal: 'center',
+          }}
+          transformOrigin={{
+            vertical: 'bottom',
+            horizontal: 'center',
+          }}
+          slotProps={{
+            paper: {
+              sx: {
+                bgcolor: 'var(--panel)',
+                border: '1px solid var(--divider)',
+                mb: 1,
+                minWidth: '280px',
+              }
+            }
+          }}
+        >
+          {CLOUD_PROVIDER_OPTIONS.map((provider) => (
+            <MenuItem
+              key={provider.id}
+              onClick={() => handleSelectProvider(provider.id)}
+              selected={selectedCloudProvider === provider.id}
+              sx={{
+                py: 1.5,
+                '&.Mui-selected': {
+                  bgcolor: 'rgba(255,255,255,0.05)',
+                }
+              }}
+            >
+              <ListItemIcon>
+                <CloudQueueIcon sx={{ color: provider.id === 'gcp-vertex' ? 'var(--accent-yellow)' : 'var(--muted-text)' }} />
+              </ListItemIcon>
+              <ListItemText
+                primary={provider.name}
+                secondary={provider.description}
                 secondaryTypographyProps={{
                   sx: { fontSize: '12px', color: 'var(--muted-text)' }
                 }}

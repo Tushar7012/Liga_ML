@@ -8,7 +8,10 @@
 /** Custom metadata attached to every UIMessage via the `metadata` field. */
 export interface MessageMeta {
   createdAt?: string;
+  cloudProvider?: CloudProviderId;
 }
+
+export type CloudProviderId = 'hf-jobs' | 'gcp-vertex';
 
 export interface SessionMeta {
   id: string;
@@ -17,6 +20,7 @@ export interface SessionMeta {
   isActive: boolean;
   needsAttention: boolean;
   model?: string | null;
+  cloudProvider?: CloudProviderId;
   /** True when the backend no longer recognizes this session id (e.g.
    *  after a backend restart). The UI shows a recovery banner and
    *  disables input until the user chooses to restore-with-summary or

@@ -20,6 +20,8 @@ import { useAgentStore } from '@/store/agentStore';
 import { useSessionStore } from '@/store/sessionStore';
 import { useLayoutStore } from '@/store/layoutStore';
 import { logger } from '@/utils/logger';
+import { buildVertexStateMarkdown, createVertexRunPanel } from '@/lib/vertex-job-panel';
+import type { ToolStateChangeEventData } from '@/types/events';
 
 interface UseAgentChatOptions {
   sessionId: string;
@@ -27,6 +29,14 @@ interface UseAgentChatOptions {
   onReady?: () => void;
   onError?: (error: string) => void;
   onSessionDead?: (sessionId: string) => void;
+}
+
+const STREAMABLE_TOOLS = new Set(['hf_jobs', 'gcp_vertex_jobs', 'sandbox', 'bash']);
+
+function appendPanelOutput(existing: string, next: string): string {
+  if (!existing) return next;
+  if (!next) return existing;
+  return `${existing}\n${next}`;
 }
 
 export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionDead }: UseAgentChatOptions) {
@@ -145,25 +155,30 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
           return;
         }
 
-        const STREAMABLE_TOOLS = new Set(['hf_jobs', 'sandbox', 'bash']);
         if (!STREAMABLE_TOOLS.has(tool)) return;
 
         const sessState = useAgentStore.getState().getSessionState(sessionId);
         const existingOutput = sessState.panelData?.output?.content || '';
 
-        const newContent = existingOutput
-          ? existingOutput + '\n' + log
-          : log;
+        const newContent = appendPanelOutput(existingOutput, log);
 
         if (!sessState.panelData) {
-          const title = tool === 'bash' ? 'Sandbox' : tool === 'sandbox' ? 'Sandbox' : 'Job Output';
+          const title = tool === 'bash' || tool === 'sandbox'
+            ? 'Sandbox'
+            : tool === 'gcp_vertex_jobs'
+              ? 'Vertex AI Job Output'
+              : 'Job Output';
+          const language = tool === 'gcp_vertex_jobs' ? 'markdown' : 'text';
           updateSession(sessionId, {
-            panelData: { title, output: { content: newContent, language: 'text' } },
+            panelData: { title, output: { content: newContent, language } },
             panelView: 'output',
           });
         } else {
+          const language = tool === 'gcp_vertex_jobs'
+            ? 'markdown'
+            : sessState.panelData.output?.language || 'text';
           updateSession(sessionId, {
-            panelData: { ...sessState.panelData, output: { content: newContent, language: 'text' } },
+            panelData: { ...sessState.panelData, output: { content: newContent, language } },
             panelView: 'output',
           });
         }
@@ -214,6 +229,15 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
             panelView: 'script' as const,
             panelEditable: true,
           };
+        } else if (firstTool.tool === 'gcp_vertex_jobs') {
+          const vertexPanel = createVertexRunPanel(firstTool.arguments as Record<string, unknown>);
+          if (vertexPanel) {
+            panelUpdate = {
+              panelData: vertexPanel.data,
+              panelView: vertexPanel.view,
+              panelEditable: vertexPanel.editable,
+            };
+          }
         } else if (firstTool.tool === 'hf_repo_files' && args.content) {
           const filename = args.path || 'file';
           panelUpdate = {
@@ -253,6 +277,18 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
             useLayoutStore.getState().setRightPanelOpen(true);
             useLayoutStore.getState().setLeftSidebarOpen(false);
           }
+        } else if (toolName === 'gcp_vertex_jobs') {
+          const vertexPanel = createVertexRunPanel(args);
+          if (!vertexPanel) return;
+          updateSession(sessionId, {
+            panelData: vertexPanel.data,
+            panelView: vertexPanel.view,
+            panelEditable: vertexPanel.editable,
+          });
+          if (isActiveRef.current) {
+            useLayoutStore.getState().setRightPanelOpen(true);
+            useLayoutStore.getState().setLeftSidebarOpen(false);
+          }
         } else if (toolName === 'hf_repo_files' && args.operation === 'upload' && args.content) {
           updateSession(sessionId, {
             panelData: {
@@ -284,10 +320,62 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
               : { title: 'Output', output: { content: output, language: 'markdown' } },
             panelView: !success ? 'output' : sessState.panelView,
           });
+        } else if (toolName === 'gcp_vertex_jobs' && output) {
+          updateSession(sessionId, {
+            panelData: sessState.panelData
+              ? { ...sessState.panelData, output: { content: output, language: 'markdown' } }
+              : { title: 'Vertex AI Job Output', output: { content: output, language: 'markdown' } },
+            panelView: !success ? 'output' : sessState.panelView,
+            panelEditable: false,
+          });
+          if (isActiveRef.current && !useLayoutStore.getState().isRightPanelOpen) {
+            useLayoutStore.getState().setRightPanelOpen(true);
+          }
         } else if (toolName === 'bash') {
           if (!success) {
             updateSession(sessionId, { panelView: 'output' });
           }
+        }
+      },
+      onToolStateChange: (state: ToolStateChangeEventData) => {
+        if (state.tool !== 'gcp_vertex_jobs' || !state.tool_call_id) return;
+
+        const store = useAgentStore.getState();
+        store.setJobRuntimeState(state.tool_call_id, {
+          tool: state.tool,
+          state: state.state,
+          jobName: state.jobName,
+          jobUrl: state.jobUrl,
+          outputDir: state.outputDir,
+        });
+        if (state.jobUrl) {
+          store.setJobUrl(state.tool_call_id, state.jobUrl);
+        }
+
+        const sessState = store.getSessionState(sessionId);
+        const stateMarkdown = buildVertexStateMarkdown({
+          state: state.state,
+          jobName: state.jobName,
+          jobUrl: state.jobUrl,
+          outputDir: state.outputDir,
+        });
+        if (!stateMarkdown) return;
+
+        const existingOutput = sessState.panelData?.output?.content || '';
+        const content = existingOutput.includes('## Vertex AI Job State')
+          ? existingOutput.replace(/## Vertex AI Job State[\s\S]*$/m, stateMarkdown)
+          : appendPanelOutput(existingOutput, stateMarkdown);
+
+        updateSession(sessionId, {
+          panelData: sessState.panelData
+            ? { ...sessState.panelData, output: { content, language: 'markdown' } }
+            : { title: 'Vertex AI Job Output', output: { content, language: 'markdown' } },
+          panelView: sessState.panelData?.script ? sessState.panelView : 'output',
+          panelEditable: false,
+        });
+
+        if (isActiveRef.current && !useLayoutStore.getState().isRightPanelOpen) {
+          useLayoutStore.getState().setRightPanelOpen(true);
         }
       },
       onStreaming: () => {
@@ -557,6 +645,20 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
           } else if (et === 'tool_state_change') {
             const state = event.data?.state as string;
             const toolName = event.data?.tool as string;
+            const toolCallId = event.data?.tool_call_id as string;
+            if (toolCallId) {
+              sideChannel.onToolStateChange({
+                tool: toolName,
+                tool_call_id: toolCallId,
+                state,
+                jobName: event.data?.jobName as string | undefined,
+                jobUrl: event.data?.jobUrl as string | undefined,
+                outputDir: event.data?.outputDir as string | undefined,
+                trackioSpaceId: event.data?.trackioSpaceId as string | undefined,
+                trackioProject: event.data?.trackioProject as string | undefined,
+                namespace: event.data?.namespace as string | undefined,
+              });
+            }
             if (state === 'running' && toolName) sideChannel.onToolRunning(toolName);
           } else if (et === 'turn_complete' || et === 'error' || et === 'interrupted') {
             sideChannel.onProcessingDone();

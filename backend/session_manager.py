@@ -100,6 +100,7 @@ class AgentSession:
     is_processing: bool = False  # True while a submission is being executed
     broadcaster: Any = None
     title: str | None = None
+    cloud_provider: str = "hf-jobs"
     # True once this session has been counted against the user's daily
     # Claude quota. Guards double-counting when the user re-selects an
     # Anthropic model mid-session.
@@ -170,6 +171,7 @@ class SessionManager:
         model: str | None,
         event_queue: asyncio.Queue,
         notification_destinations: list[str] | None = None,
+        cloud_provider: str = "hf-jobs",
     ) -> tuple[ToolRouter, Session]:
         """Build blocking per-session resources in a worker thread."""
         import time as _time
@@ -193,6 +195,7 @@ class SessionManager:
             session_id=session_id,
             persistence_store=self._store(),
         )
+        session.cloud_provider = cloud_provider
         t1 = _time.monotonic()
         logger.info("Session initialized in %.2fs", t1 - t0)
         return tool_router, session
@@ -537,6 +540,7 @@ class SessionManager:
                     )
                     or 0.0
                 ),
+                cloud_provider=agent_session.cloud_provider,
             )
         except Exception as e:
             logger.warning(
@@ -605,6 +609,7 @@ class SessionManager:
         from litellm import Message
 
         model = meta.get("model") or self.config.model_name
+        cloud_provider = meta.get("cloud_provider") or "hf-jobs"
         event_queue: asyncio.Queue = asyncio.Queue()
         submission_queue: asyncio.Queue = asyncio.Queue()
         tool_router, session = await asyncio.to_thread(
@@ -616,6 +621,7 @@ class SessionManager:
             model=model,
             event_queue=event_queue,
             notification_destinations=meta.get("notification_destinations") or [],
+            cloud_provider=cloud_provider,
         )
 
         restored_messages: list[Message] = []
@@ -662,6 +668,7 @@ class SessionManager:
             is_processing=False,
             claude_counted=bool(meta.get("claude_counted")),
             title=meta.get("title"),
+            cloud_provider=cloud_provider,
         )
         started = await self._start_agent_session(
             agent_session=agent_session,
@@ -687,6 +694,7 @@ class SessionManager:
         hf_token: str | None = None,
         model: str | None = None,
         is_pro: bool | None = None,
+        cloud_provider: str = "hf-jobs",
     ) -> str:
         """Create a new agent session and return its ID.
 
@@ -739,6 +747,7 @@ class SessionManager:
             hf_token=hf_token,
             model=model,
             event_queue=event_queue,
+            cloud_provider=cloud_provider,
         )
 
         # Create wrapper
@@ -750,6 +759,7 @@ class SessionManager:
             user_id=user_id,
             hf_username=hf_username,
             hf_token=hf_token,
+            cloud_provider=cloud_provider,
         )
 
         await self._start_agent_session(
@@ -1005,9 +1015,18 @@ class SessionManager:
         await agent_session.submission_queue.put(submission)
         return True
 
-    async def submit_user_input(self, session_id: str, text: str) -> bool:
+    async def submit_user_input(
+        self, session_id: str, text: str, cloud_provider: str | None = None
+    ) -> bool:
         """Submit user input to a session."""
-        operation = Operation(op_type=OpType.USER_INPUT, data={"text": text})
+        agent_session = self.sessions.get(session_id)
+        if cloud_provider in {"hf-jobs", "gcp-vertex"} and agent_session:
+            agent_session.cloud_provider = cloud_provider
+            agent_session.session.cloud_provider = cloud_provider
+        operation = Operation(
+            op_type=OpType.USER_INPUT,
+            data={"text": text, "cloud_provider": cloud_provider},
+        )
         return await self.submit(session_id, operation)
 
     async def submit_approval(
@@ -1191,6 +1210,7 @@ class SessionManager:
             "user_id": agent_session.user_id,
             "pending_approval": pending_approval,
             "model": agent_session.session.config.model_name,
+            "cloud_provider": agent_session.cloud_provider,
             "title": agent_session.title,
             "notification_destinations": list(
                 agent_session.session.notification_destinations
@@ -1258,6 +1278,7 @@ class SessionManager:
                         "user_id": row.get("user_id") or "dev",
                         "pending_approval": pending or None,
                         "model": row.get("model"),
+                        "cloud_provider": row.get("cloud_provider") or "hf-jobs",
                         "title": row.get("title"),
                         "notification_destinations": row.get(
                             "notification_destinations"
