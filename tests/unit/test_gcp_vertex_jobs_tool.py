@@ -266,6 +266,8 @@ async def test_run_requires_project_region_and_bucket(monkeypatch):
     assert "GOOGLE_CLOUD_PROJECT" in result["formatted"]
     assert "GOOGLE_CLOUD_REGION" in result["formatted"]
     assert "GCS_BUCKET" in result["formatted"]
+    assert "Set GOOGLE_CLOUD_PROJECT" in result["formatted"]
+    assert "/api/health/providers" in result["formatted"]
 
 
 @pytest.mark.asyncio

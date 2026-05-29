@@ -7,6 +7,7 @@ dependency. In dev mode (no OAUTH_CLIENT_ID), auth is bypassed automatically.
 import asyncio
 import json
 import logging
+import os
 from typing import Any
 
 from dependencies import (
@@ -51,6 +52,7 @@ from session_manager import (
 
 import user_quotas
 
+from agent.core.gcp_readiness import build_gcp_vertex_readiness_snapshot
 from agent.core.hf_access import get_jobs_access
 from agent.core.hf_tokens import resolve_hf_request_token, resolve_hf_router_token
 from agent.core.llm_params import _resolve_llm_params
@@ -367,6 +369,24 @@ async def llm_health_check() -> LLMHealthResponse:
             error=str(e)[:500],
             error_type=error_type,
         )
+
+
+@router.get("/health/providers")
+async def provider_health() -> dict[str, Any]:
+    """Return non-secret readiness for training providers."""
+    hf_token_configured = bool(
+        os.environ.get("HF_TOKEN") or os.environ.get("HF_ADMIN_TOKEN")
+    )
+    return {
+        "hf_jobs": {
+            "configured": hf_token_configured,
+            "hf_token_configured": hf_token_configured,
+            "notes": []
+            if hf_token_configured
+            else ["HF_TOKEN or user OAuth token is required to run HF Jobs."],
+        },
+        "gcp_vertex": build_gcp_vertex_readiness_snapshot(),
+    }
 
 
 @router.get("/config/model")

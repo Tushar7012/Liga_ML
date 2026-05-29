@@ -32,6 +32,12 @@ DEFAULT_REPLICA_COUNT = 1
 DEFAULT_MONITOR_COOLDOWN_SECONDS = int(
     os.environ.get("GCP_VERTEX_MONITOR_COOLDOWN_SECONDS", "120")
 )
+GCP_REQUIRED_ENV_HELP = (
+    "Set GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_REGION, GCS_BUCKET, "
+    "VERTEX_AI_STAGING_BUCKET, and VERTEX_AI_OUTPUT_DIR on Cloud Run or in .env. "
+    "Use an attached Cloud Run service account with Vertex AI, GCS, logging, "
+    "and Artifact Registry permissions. Check /api/health/providers for readiness."
+)
 TERMINAL_JOB_STATES = {
     "JOB_STATE_SUCCEEDED",
     "JOB_STATE_FAILED",
@@ -178,7 +184,8 @@ class GcpVertexJobsTool:
             return self._error(
                 "Missing Google Cloud configuration: "
                 + ", ".join(missing)
-                + ". Set these on Cloud Run or in local environment before using Vertex AI."
+                + ". "
+                + GCP_REQUIRED_ENV_HELP
             )
 
         script = args.get("script")
@@ -337,7 +344,10 @@ class GcpVertexJobsTool:
         config, missing = _required_config()
         if missing:
             return self._error(
-                "Missing Google Cloud configuration: " + ", ".join(missing)
+                "Missing Google Cloud configuration: "
+                + ", ".join(missing)
+                + ". "
+                + GCP_REQUIRED_ENV_HELP
             )
         client = self._job_service_client(config["region"])
         parent = f"projects/{config['project']}/locations/{config['region']}"
@@ -368,7 +378,10 @@ class GcpVertexJobsTool:
         config, missing = _required_config()
         if missing:
             return self._error(
-                "Missing Google Cloud configuration: " + ", ".join(missing)
+                "Missing Google Cloud configuration: "
+                + ", ".join(missing)
+                + ". "
+                + GCP_REQUIRED_ENV_HELP
             )
         client = self._job_service_client(config["region"])
         job = await asyncio.to_thread(client.get_custom_job, name=job_name)
@@ -394,7 +407,10 @@ class GcpVertexJobsTool:
         config, missing = _required_config()
         if missing:
             return self._error(
-                "Missing Google Cloud configuration: " + ", ".join(missing)
+                "Missing Google Cloud configuration: "
+                + ", ".join(missing)
+                + ". "
+                + GCP_REQUIRED_ENV_HELP
             )
         client = self._job_service_client(config["region"])
         await asyncio.to_thread(client.cancel_custom_job, name=job_name)
@@ -413,7 +429,10 @@ class GcpVertexJobsTool:
         config, missing = _required_config()
         if missing:
             return self._error(
-                "Missing Google Cloud configuration: " + ", ".join(missing)
+                "Missing Google Cloud configuration: "
+                + ", ".join(missing)
+                + ". "
+                + GCP_REQUIRED_ENV_HELP
             )
         client_cls = self.logging_client_cls or _load_logging_client_cls()
         client = client_cls(project=config["project"])
@@ -537,6 +556,9 @@ GCP_VERTEX_JOBS_TOOL_SPEC = {
         "instead of hand-writing an inline script. The SFT template uses the stable Liga ML "
         "runtime, conservative defaults, GCS output, and Hugging Face Hub push. Use raw script "
         "mode only for advanced workflows that the template does not support.\n\n"
+        "Vertex AI run operations are billable and approval-gated. Include max_run_hours "
+        "on run calls so approval and auto-approval budget checks can estimate a conservative "
+        "upper bound. If max_run_hours is omitted, manual approval is required.\n\n"
         "Before submitting training jobs: inspect the dataset, choose template parameters, "
         "and run a tiny smoke test in the sandbox when possible. Vertex AI writes checkpoints and "
         "intermediate artifacts to GCS via AIP_MODEL_DIR/LIGA_ML_OUTPUT_DIR. The final model should "
@@ -551,7 +573,8 @@ GCP_VERTEX_JOBS_TOOL_SPEC = {
         "Examples:\n"
         "{'operation': 'run', 'script': '/app/train.py', 'display_name': 'gst-sft', "
         "'machine_type': 'n1-standard-8', 'accelerator_type': 'NVIDIA_TESLA_T4', "
-        "'accelerator_count': 1, 'env': {'HF_MODEL_ID': 'ligaments/gst-model'}}\n"
+        "'accelerator_count': 1, 'max_run_hours': 2, "
+        "'env': {'HF_MODEL_ID': 'ligaments/gst-model'}}\n"
         "{'operation': 'run', 'template': 'sft', 'display_name': 'medical-sft', "
         "'dataset_name': 'FreedomIntelligence/medical-o1-reasoning-SFT', "
         "'dataset_config': 'en', 'model_name': 'Qwen/Qwen2.5-0.5B-Instruct', "
@@ -668,6 +691,14 @@ GCP_VERTEX_JOBS_TOOL_SPEC = {
             "service_account": {
                 "type": "string",
                 "description": "Optional Vertex AI runtime service account email.",
+            },
+            "max_run_hours": {
+                "type": "number",
+                "description": (
+                    "Expected maximum runtime in hours, used for approval/cost "
+                    "guardrails. Required for auto-approval; if omitted, manual "
+                    "approval is required."
+                ),
             },
             "job_name": {
                 "type": "string",

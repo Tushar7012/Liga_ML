@@ -159,6 +159,8 @@ def _validate_tool_args(tool_args: dict) -> tuple[bool, str | None]:
 
 
 _IMMEDIATE_HF_JOB_RUNS = {"run", "uv"}
+_IMMEDIATE_GCP_VERTEX_JOB_RUNS = {"run"}
+_APPROVAL_REQUIRED_GCP_VERTEX_OPS = {"run", "cancel"}
 
 
 @dataclass(frozen=True)
@@ -180,12 +182,29 @@ def _is_immediate_hf_job_run(tool_name: str, tool_args: dict) -> bool:
     return tool_name == "hf_jobs" and _operation(tool_args) in _IMMEDIATE_HF_JOB_RUNS
 
 
+def _is_immediate_gcp_vertex_job_run(tool_name: str, tool_args: dict) -> bool:
+    return (
+        tool_name == "gcp_vertex_jobs"
+        and _operation(tool_args) in _IMMEDIATE_GCP_VERTEX_JOB_RUNS
+    )
+
+
+def _is_gcp_vertex_cancel(tool_name: str, tool_args: dict) -> bool:
+    return tool_name == "gcp_vertex_jobs" and _operation(tool_args) == "cancel"
+
+
+def _is_immediate_cloud_job_run(tool_name: str, tool_args: dict) -> bool:
+    return _is_immediate_hf_job_run(
+        tool_name, tool_args
+    ) or _is_immediate_gcp_vertex_job_run(tool_name, tool_args)
+
+
 def _is_scheduled_hf_job_run(tool_name: str, tool_args: dict) -> bool:
     return tool_name == "hf_jobs" and is_scheduled_operation(_operation(tool_args))
 
 
 def _is_budgeted_auto_approval_target(tool_name: str, tool_args: dict) -> bool:
-    return tool_name == "sandbox_create" or _is_immediate_hf_job_run(
+    return tool_name == "sandbox_create" or _is_immediate_cloud_job_run(
         tool_name, tool_args
     )
 
@@ -228,6 +247,9 @@ def _base_needs_approval(
 
         return True
 
+    if tool_name == "gcp_vertex_jobs":
+        return _operation(tool_args) in _APPROVAL_REQUIRED_GCP_VERTEX_OPS
+
     # Check for file upload operations (hf_private_repos or other tools)
     if tool_name == "hf_private_repos":
         operation = tool_args.get("operation", "")
@@ -265,6 +287,8 @@ def _needs_approval(
 ) -> bool:
     """Legacy sync approval predicate used by tests and CLI display helpers."""
     if _is_scheduled_hf_job_run(tool_name, tool_args):
+        return True
+    if _is_gcp_vertex_cancel(tool_name, tool_args):
         return True
     if config and config.yolo_mode:
         return False
@@ -329,8 +353,35 @@ async def _approval_decision(
             block_reason="Scheduled HF jobs always require manual approval.",
         )
 
+    if _is_gcp_vertex_cancel(tool_name, tool_args):
+        return ApprovalDecision(
+            requires_approval=True,
+            auto_approval_blocked=_effective_yolo_enabled(session, config),
+            block_reason="Vertex AI job cancellation always requires manual approval.",
+        )
+
     yolo_enabled = _effective_yolo_enabled(session, config)
     budgeted_target = _is_budgeted_auto_approval_target(tool_name, tool_args)
+    if yolo_enabled and _is_immediate_gcp_vertex_job_run(tool_name, tool_args):
+        estimate = await estimate_tool_cost(tool_name, tool_args, session=session)
+        remaining = _remaining_budget_after_reservations(session, reserved_spend_usd)
+        reason = _budget_block_reason(estimate, remaining_cap_usd=remaining)
+        if reason:
+            return ApprovalDecision(
+                requires_approval=True,
+                auto_approval_blocked=True,
+                block_reason=reason,
+                estimated_cost_usd=estimate.estimated_cost_usd,
+                remaining_cap_usd=remaining,
+                billable=estimate.billable,
+            )
+        return ApprovalDecision(
+            requires_approval=False,
+            auto_approved=base_requires_approval,
+            estimated_cost_usd=estimate.estimated_cost_usd,
+            remaining_cap_usd=remaining,
+            billable=estimate.billable,
+        )
 
     # Cost caps are a session-scoped web policy. Legacy config.yolo_mode
     # remains uncapped for CLI/headless, except for scheduled jobs above.

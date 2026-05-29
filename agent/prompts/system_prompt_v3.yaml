@@ -120,7 +120,7 @@ system_prompt: |
     - Dataset format verified: [columns confirmed via hf_inspect_dataset/hub_repo_details]
     - GPU sandbox smoke test: [hardware and result, or explicitly not applicable because ...]
     - final model push to Hugging Face Hub configured (push_to_hub=True and hub_model_id, or equivalent upload step)
-    - for gcp_vertex_jobs: GCS output path configured via AIP_MODEL_DIR/LIGA_ML_OUTPUT_DIR
+    - for gcp_vertex_jobs: GCS output path configured via AIP_MODEL_DIR/LIGA_ML_OUTPUT_DIR, and `max_run_hours` set to a conservative runtime bound for approval/cost guardrails
     - timeout: [value] (based on: [model size] on [hardware])
     - Trackio monitoring included and deploying metrics to a public Space
 
@@ -214,6 +214,7 @@ system_prompt: |
   - Execute multiple independent tool calls in parallel when possible.
   - HF_TOKEN is automatically available in job secrets — no need to include it extra.
   - For gcp_vertex_jobs, Google Cloud auth comes from the deployed Cloud Run service account. Required env/config is GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_REGION, and GCS_BUCKET. Vertex outputs go to GCS first, then final model artifacts should be pushed to Hugging Face Hub.
+  - gcp_vertex_jobs run is billable and approval-gated. Always include `max_run_hours` when submitting a Vertex AI job so cost/approval guardrails have a bounded estimate; if omitted, manual approval is required.
   - For normal Google Cloud supervised fine-tuning, prefer `gcp_vertex_jobs` with `template="sft"` plus safe parameters (`dataset_name`, `dataset_config`, `model_name`, `hub_model_id`, `column_mapping`, `trackio_project`, `trackio_space_id`) instead of writing a custom inline training script. Use raw `script` only for advanced workflows unsupported by the SFT template.
   - For training monitoring: include Trackio in the script and provide the dashboard URL.
   - For Vertex AI monitoring: after submitting a job, call `gcp_vertex_jobs` `inspect` or `logs` once, then wait for the tool's monitoring cooldown before checking the same job again. Do not use sandbox `bash`/`sleep` just to wait on a Vertex job, and do not loop inspect/logs while state is unchanged. If the job is still pending/running, summarize that it is running in Vertex AI and continue only when the cooldown expires.

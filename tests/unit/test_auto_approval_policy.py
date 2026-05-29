@@ -63,6 +63,39 @@ async def test_scheduled_hf_jobs_always_require_manual_approval(operation):
     )
 
 
+def test_gcp_vertex_run_and_cancel_require_approval():
+    config = _config(confirm_cpu_jobs=False)
+
+    assert agent_loop._needs_approval("gcp_vertex_jobs", {"operation": "run"}, config)
+    assert agent_loop._needs_approval(
+        "gcp_vertex_jobs",
+        {"operation": "cancel", "job_name": "projects/p/locations/r/customJobs/1"},
+        config,
+    )
+
+
+def test_gcp_vertex_read_only_operations_do_not_require_approval():
+    config = _config(confirm_cpu_jobs=True)
+
+    for operation in ["ps", "logs", "inspect"]:
+        assert not agent_loop._needs_approval(
+            "gcp_vertex_jobs",
+            {"operation": operation, "job_name": "projects/p/locations/r/customJobs/1"},
+            config,
+        )
+
+
+def test_existing_sandbox_approval_behavior_is_unchanged():
+    config = _config()
+
+    assert not agent_loop._needs_approval(
+        "sandbox_create", {"hardware": "cpu-basic"}, config
+    )
+    assert agent_loop._needs_approval(
+        "sandbox_create", {"hardware": "t4-small"}, config
+    )
+
+
 @pytest.mark.asyncio
 async def test_immediate_hf_job_under_cap_auto_runs(monkeypatch):
     async def fake_estimate(*args, **kwargs):
@@ -79,6 +112,46 @@ async def test_immediate_hf_job_under_cap_auto_runs(monkeypatch):
     assert decision.requires_approval is False
     assert decision.auto_approved is True
     assert decision.estimated_cost_usd == 2.0
+
+
+@pytest.mark.asyncio
+async def test_gcp_vertex_job_under_cap_auto_runs_when_cost_is_known(monkeypatch):
+    async def fake_estimate(*args, **kwargs):
+        return CostEstimate(estimated_cost_usd=1.5, billable=True)
+
+    monkeypatch.setattr(agent_loop, "estimate_tool_cost", fake_estimate)
+
+    decision = await agent_loop._approval_decision(
+        "gcp_vertex_jobs",
+        {"operation": "run", "machine_type": "n1-standard-8", "max_run_hours": 2},
+        _session(cap=5.0, spent=1.0),
+    )
+
+    assert decision.requires_approval is False
+    assert decision.auto_approved is True
+    assert decision.estimated_cost_usd == 1.5
+
+
+@pytest.mark.asyncio
+async def test_gcp_vertex_unknown_cost_blocks_auto_approval(monkeypatch):
+    async def fake_estimate(*args, **kwargs):
+        return CostEstimate(
+            estimated_cost_usd=None,
+            billable=True,
+            block_reason="Vertex AI cost requires max_run_hours.",
+        )
+
+    monkeypatch.setattr(agent_loop, "estimate_tool_cost", fake_estimate)
+
+    decision = await agent_loop._approval_decision(
+        "gcp_vertex_jobs",
+        {"operation": "run", "machine_type": "n1-standard-8"},
+        _session(cap=5.0, spent=0.0),
+    )
+
+    assert decision.requires_approval is True
+    assert decision.auto_approval_blocked is True
+    assert "max_run_hours" in decision.block_reason
 
 
 @pytest.mark.asyncio
