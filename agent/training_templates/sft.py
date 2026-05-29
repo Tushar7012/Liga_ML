@@ -32,13 +32,20 @@ class SftTemplateConfig:
     hub_model_id: str
     dataset_config: str | None = None
     dataset_split: str = "train"
-    task_type: str = "sft"
-    column_mapping: dict[str, Any] = field(default_factory=dict)
+    eval_dataset_split: str | None = None
+    validation_split_ratio: float = 0.1
     max_train_samples: int | None = None
+    max_eval_samples: int | None = None
     num_train_epochs: int = 1
     max_length: int = 1024
+    learning_rate: float = 2e-4
+    per_device_train_batch_size: int = 1
+    gradient_accumulation_steps: int = 8
     trackio_project: str | None = None
     trackio_space_id: str | None = None
+    run_name: str | None = None
+    column_mapping: dict[str, Any] = field(default_factory=dict)
+    task_type: str = "sft"
 
 
 def build_sft_training_script(config: SftTemplateConfig) -> str:
@@ -57,14 +64,21 @@ def build_sft_training_script(config: SftTemplateConfig) -> str:
         "dataset_name": config.dataset_name,
         "dataset_config": config.dataset_config,
         "dataset_split": config.dataset_split,
+        "eval_dataset_split": config.eval_dataset_split,
+        "validation_split_ratio": config.validation_split_ratio,
         "model_name": config.model_name,
         "hub_model_id": config.hub_model_id,
         "column_mapping": config.column_mapping,
         "max_train_samples": config.max_train_samples,
+        "max_eval_samples": config.max_eval_samples,
         "num_train_epochs": config.num_train_epochs,
         "max_length": config.max_length,
+        "learning_rate": config.learning_rate,
+        "per_device_train_batch_size": config.per_device_train_batch_size,
+        "gradient_accumulation_steps": config.gradient_accumulation_steps,
         "trackio_project": config.trackio_project,
         "trackio_space_id": config.trackio_space_id,
+        "run_name": config.run_name,
         "packages": DEFAULT_PACKAGES,
     }
     config_json = json.dumps(payload, sort_keys=True)
@@ -85,16 +99,29 @@ CONFIG = json.loads({config_json!r})
 DATASET_NAME = "{config.dataset_name}"
 MODEL_NAME = "{config.model_name}"
 HUB_MODEL_ID = "{config.hub_model_id}"
-VERTEX_OUTPUT_DIR = os.environ.get("AIP_MODEL_DIR", "/tmp/liga-ml-sft-output")
+HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+if not HF_TOKEN:
+    raise RuntimeError(
+        "HF_TOKEN or HUGGINGFACE_HUB_TOKEN is required to load private datasets and push the final model to Hugging Face Hub."
+    )
+
+RAW_AIP_MODEL_DIR = os.environ.get("AIP_MODEL_DIR")
+RAW_LIGA_OUTPUT_DIR = os.environ.get("LIGA_ML_OUTPUT_DIR")
+VERTEX_OUTPUT_DIR = (
+    RAW_AIP_MODEL_DIR or RAW_LIGA_OUTPUT_DIR or "/tmp/liga-ml-sft-output"
+)
 OUTPUT_DIR = (
     "/tmp/liga-ml-sft-output"
     if VERTEX_OUTPUT_DIR.startswith("gs://")
     else VERTEX_OUTPUT_DIR
 )
+RESULT_FILE = Path("liga_training_result.json")
 REQUIRED_PACKAGES = {packages_source}
 
 
 def install_dependencies() -> None:
+    if os.environ.get("LIGA_ML_SKIP_DEP_INSTALL") == "1":
+        return
     if any(not package for package in REQUIRED_PACKAGES):
         raise RuntimeError("Empty dependency entry is not allowed.")
     subprocess.check_call([
@@ -113,6 +140,7 @@ install_dependencies()
 from datasets import load_dataset
 from google.cloud import storage
 from huggingface_hub import HfApi
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import SFTConfig, SFTTrainer
 
 
@@ -135,49 +163,156 @@ def upload_folder_to_gcs(folder_path: Path, gcs_uri: str) -> None:
         bucket.blob(blob_name).upload_from_filename(str(file_path))
 
 
-def format_example(example):
-    mapping = CONFIG.get("column_mapping") or {{}}
-    if "messages" in example:
-        return {{"messages": example["messages"]}}
-    if "prompt" in example and "completion" in example:
-        return {{"prompt": example["prompt"], "completion": example["completion"]}}
+def first_gs_uri(*values):
+    for value in values:
+        if value and value.startswith("gs://"):
+            return value
+    return ""
 
-    user_column = mapping.get("user") or "input"
-    assistant_columns = mapping.get("assistant") or ["output"]
-    if isinstance(assistant_columns, str):
-        assistant_columns = [assistant_columns]
 
+def _string_value(example, key):
+    value = example.get(key)
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _missing_column_error(kind, column):
+    return KeyError(f"Mapped {{kind}} column is missing: {{column}}")
+
+
+def fallback_text_from_example(example):
+    data = example.get("data")
+    if isinstance(data, dict):
+        nested = fallback_text_from_example(data)
+        if nested:
+            return nested
+    for value in example.values():
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return json.dumps(example, ensure_ascii=False, sort_keys=True)
+
+
+def _messages_from_pair(example, user_column, assistant_columns):
     if user_column not in example:
-        raise KeyError(f"Missing user column: {{user_column}}")
+        raise _missing_column_error("user", user_column)
     missing = [column for column in assistant_columns if column not in example]
     if missing:
-        raise KeyError(f"Missing assistant columns: {{missing}}")
+        raise _missing_column_error("assistant", missing[0])
 
-    assistant_text = "\\n\\n".join(str(example[column]).strip() for column in assistant_columns if example[column])
+    assistant_text = "\\n\\n".join(
+        _string_value(example, column)
+        for column in assistant_columns
+        if _string_value(example, column)
+    )
     return {{
         "messages": [
-            {{"role": "user", "content": str(example[user_column]).strip()}},
+            {{"role": "user", "content": _string_value(example, user_column)}},
             {{"role": "assistant", "content": assistant_text}},
         ]
     }}
 
 
-def main() -> None:
-    dataset_kwargs = {{"path": CONFIG["dataset_name"], "split": CONFIG["dataset_split"]}}
+def format_example(example):
+    mapping = CONFIG.get("column_mapping") or {{}}
+    if not isinstance(mapping, dict):
+        raise TypeError("column_mapping must be an object")
+    if mapping.get("text"):
+        text_column = mapping["text"]
+        if text_column not in example:
+            raise _missing_column_error("text", text_column)
+        return {{"text": _string_value(example, text_column)}}
+    if mapping.get("user") or mapping.get("assistant"):
+        user_column = mapping.get("user") or "input"
+        assistant_columns = mapping.get("assistant") or ["output"]
+        if isinstance(assistant_columns, str):
+            assistant_columns = [assistant_columns]
+        return _messages_from_pair(example, user_column, assistant_columns)
+
+    if "messages" in example:
+        return {{"messages": example["messages"]}}
+    if "text" in example:
+        return {{"text": _string_value(example, "text")}}
+    for user_column, assistant_column in (
+        ("prompt", "completion"),
+        ("instruction", "output"),
+        ("instruction", "response"),
+        ("input", "output"),
+        ("input", "response"),
+        ("question", "answer"),
+    ):
+        if user_column in example and assistant_column in example:
+            return _messages_from_pair(example, user_column, [assistant_column])
+
+    return {{"text": fallback_text_from_example(example)}}
+
+
+def load_dataset_split(split_name):
+    dataset_kwargs = {{"path": CONFIG["dataset_name"], "split": split_name}}
     if CONFIG.get("dataset_config"):
         dataset_kwargs["name"] = CONFIG["dataset_config"]
+    return load_dataset(**dataset_kwargs)
 
-    dataset = load_dataset(**dataset_kwargs)
-    dataset = dataset.map(format_example, remove_columns=dataset.column_names)
+
+def prepare_datasets():
+    train_dataset = load_dataset_split(CONFIG["dataset_split"])
+    eval_dataset = None
+    if CONFIG.get("eval_dataset_split"):
+        eval_dataset = load_dataset_split(CONFIG["eval_dataset_split"])
+    elif len(train_dataset) >= 20:
+        split = train_dataset.train_test_split(
+            test_size=float(CONFIG["validation_split_ratio"]),
+            seed=42,
+            shuffle=True,
+        )
+        train_dataset = split["train"]
+        eval_dataset = split["test"]
+
+    train_dataset = train_dataset.map(format_example, remove_columns=train_dataset.column_names)
+    if eval_dataset is not None:
+        eval_dataset = eval_dataset.map(format_example, remove_columns=eval_dataset.column_names)
+
     if CONFIG.get("max_train_samples"):
-        dataset = dataset.select(range(min(int(CONFIG["max_train_samples"]), len(dataset))))
+        train_dataset = train_dataset.select(
+            range(min(int(CONFIG["max_train_samples"]), len(train_dataset)))
+        )
+    if eval_dataset is not None and CONFIG.get("max_eval_samples"):
+        eval_dataset = eval_dataset.select(
+            range(min(int(CONFIG["max_eval_samples"]), len(eval_dataset)))
+        )
+    return train_dataset, eval_dataset
 
-    training_args = SFTConfig(
+
+def write_result(status, gcs_output_dir, eval_metrics, train_rows, eval_rows):
+    result = {{
+        "status": status,
+        "provider": "gcp-vertex",
+        "hub_model_id": HUB_MODEL_ID,
+        "model_url": f"https://huggingface.co/{{HUB_MODEL_ID}}",
+        "gcs_output_dir": gcs_output_dir,
+        "eval": eval_metrics,
+        "train_rows": train_rows,
+        "eval_rows": eval_rows,
+    }}
+    RESULT_FILE.write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
+    return result
+
+
+def main() -> None:
+    train_dataset, eval_dataset = prepare_datasets()
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, token=HF_TOKEN)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    model = AutoModelForCausalLM.from_pretrained(MODEL_NAME, token=HF_TOKEN)
+
+    trackio_project = CONFIG.get("trackio_project") or os.environ.get("TRACKIO_PROJECT")
+    trackio_space_id = CONFIG.get("trackio_space_id") or os.environ.get("TRACKIO_SPACE_ID")
+    training_kwargs = dict(
         output_dir=OUTPUT_DIR,
         num_train_epochs=int(CONFIG["num_train_epochs"]),
-        per_device_train_batch_size=1,
-        gradient_accumulation_steps=8,
-        learning_rate=2e-4,
+        per_device_train_batch_size=int(CONFIG["per_device_train_batch_size"]),
+        gradient_accumulation_steps=int(CONFIG["gradient_accumulation_steps"]),
+        learning_rate=float(CONFIG["learning_rate"]),
         logging_strategy="steps",
         logging_steps=10,
         logging_first_step=True,
@@ -185,9 +320,7 @@ def main() -> None:
         fp16=True,
         gradient_checkpointing=True,
         disable_tqdm=True,
-        report_to=["trackio"] if CONFIG.get("trackio_space_id") else [],
-        project=CONFIG.get("trackio_project"),
-        trackio_space_id=CONFIG.get("trackio_space_id"),
+        report_to=["trackio"] if (trackio_project or trackio_space_id) else [],
         remove_unused_columns=False,
         push_to_hub=True,
         hub_model_id=HUB_MODEL_ID,
@@ -195,25 +328,82 @@ def main() -> None:
         packing=False,
         max_length={int(config.max_length)},
     )
+    if CONFIG.get("run_name"):
+        training_kwargs["run_name"] = CONFIG["run_name"]
+    if trackio_project:
+        training_kwargs["project"] = trackio_project
+    if trackio_space_id:
+        training_kwargs["trackio_space_id"] = trackio_space_id
+    if eval_dataset is not None:
+        training_kwargs["eval_strategy"] = "steps"
+        training_kwargs["eval_steps"] = 10
+
+    training_args = SFTConfig(**training_kwargs)
 
     trainer = SFTTrainer(
-        model=CONFIG["model_name"],
+        model=model,
         args=training_args,
-        train_dataset=dataset,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
+        processing_class=tokenizer,
     )
     trainer.train()
 
     final_dir = Path(OUTPUT_DIR) / "final"
     trainer.save_model(str(final_dir))
-    trainer.processing_class.save_pretrained(str(final_dir))
+    if getattr(trainer, "processing_class", None) is not None:
+        trainer.processing_class.save_pretrained(str(final_dir))
+    else:
+        tokenizer.save_pretrained(str(final_dir))
+
+    eval_metrics = {{}}
+    if eval_dataset is not None:
+        eval_metrics = trainer.evaluate()
+        print("Evaluation metrics JSON: " + json.dumps(eval_metrics, sort_keys=True), flush=True)
+    else:
+        print("No evaluation dataset was available; skipping evaluation.", flush=True)
+
     trainer.push_to_hub()
 
     api = HfApi()
-    api.upload_folder(folder_path=str(final_dir), repo_id=HUB_MODEL_ID, repo_type="model")
-    upload_folder_to_gcs(final_dir, VERTEX_OUTPUT_DIR)
+    api.upload_folder(
+        folder_path=str(final_dir),
+        repo_id=HUB_MODEL_ID,
+        repo_type="model",
+        token=HF_TOKEN,
+    )
+    gcs_output_dir = first_gs_uri(RAW_AIP_MODEL_DIR, RAW_LIGA_OUTPUT_DIR)
+    status = "succeeded"
+    try:
+        upload_folder_to_gcs(final_dir, gcs_output_dir)
+    except Exception as exc:
+        status = "partial_failure"
+        write_result(
+            status,
+            gcs_output_dir,
+            eval_metrics,
+            len(train_dataset),
+            len(eval_dataset) if eval_dataset is not None else 0,
+        )
+        raise RuntimeError(
+            f"Model pushed to Hugging Face Hub, but GCS final artifact upload failed: {{exc}}"
+        ) from exc
 
-    print(f"Final GCS/Vertex output: {{VERTEX_OUTPUT_DIR}}", flush=True)
-    print(f"Final Hugging Face model: https://huggingface.co/{{HUB_MODEL_ID}}", flush=True)
+    write_result(
+        status,
+        gcs_output_dir,
+        eval_metrics,
+        len(train_dataset),
+        len(eval_dataset) if eval_dataset is not None else 0,
+    )
+    eval_json = json.dumps(eval_metrics, separators=(",", ":"), sort_keys=True)
+    print("LIGA_TRAINING_STATUS=succeeded", flush=True)
+    print("LIGA_PROVIDER=gcp-vertex", flush=True)
+    print(f"LIGA_FINAL_MODEL_URL=https://huggingface.co/{{HUB_MODEL_ID}}", flush=True)
+    print(f"LIGA_HUB_MODEL_ID={{HUB_MODEL_ID}}", flush=True)
+    print(f"LIGA_GCS_OUTPUT_DIR={{gcs_output_dir}}", flush=True)
+    print(f"LIGA_EVAL_RESULT_JSON={{eval_json}}", flush=True)
+    print("LIGA_RESULT_FILE=liga_training_result.json", flush=True)
 
 
 if __name__ == "__main__":

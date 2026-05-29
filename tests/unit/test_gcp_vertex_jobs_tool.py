@@ -187,6 +187,62 @@ async def test_run_sft_template_generates_vertex_training_script(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_sft_template_propagates_phase4_parameters(monkeypatch):
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv("GOOGLE_CLOUD_REGION", "us-central1")
+    monkeypatch.setenv("GCS_BUCKET", "liga-training")
+    FakeCustomJob.instances = []
+
+    tool = GcpVertexJobsTool(custom_job_cls=FakeCustomJob)
+
+    result = await tool.execute(
+        {
+            "operation": "run",
+            "template": "sft",
+            "display_name": "phase4-sft",
+            "dataset_name": "trl-lib/Capybara",
+            "dataset_split": "train",
+            "eval_dataset_split": "validation",
+            "model_name": "Qwen/Qwen2.5-0.5B-Instruct",
+            "hub_model_id": "ligaments-dev/phase4-sft",
+            "max_train_samples": 32,
+            "max_eval_samples": 8,
+            "validation_split_ratio": 0.25,
+            "num_train_epochs": 2,
+            "max_length": 768,
+            "learning_rate": 0.0001,
+            "per_device_train_batch_size": 2,
+            "gradient_accumulation_steps": 4,
+            "run_name": "phase4-run",
+        }
+    )
+
+    assert not result.get("isError")
+    worker_pool = FakeCustomJob.instances[0].kwargs["worker_pool_specs"][0]
+    encoded_runner = worker_pool["container_spec"]["command"][-1]
+    encoded_script = re.search(r"b64decode\('([^']+)'\)", encoded_runner).group(1)
+    decoded_script = base64.b64decode(encoded_script).decode("utf-8")
+    assert '"eval_dataset_split": "validation"' in decoded_script
+    assert '"max_eval_samples": 8' in decoded_script
+    assert '"validation_split_ratio": 0.25' in decoded_script
+    assert '"max_length": 768' in decoded_script
+    assert '"learning_rate": 0.0001' in decoded_script
+    assert '"per_device_train_batch_size": 2' in decoded_script
+    assert '"gradient_accumulation_steps": 4' in decoded_script
+    assert '"run_name": "phase4-run"' in decoded_script
+    assert "max_length=768" in decoded_script
+    assert 'learning_rate=float(CONFIG["learning_rate"])' in decoded_script
+    assert (
+        'per_device_train_batch_size=int(CONFIG["per_device_train_batch_size"])'
+        in decoded_script
+    )
+    assert (
+        'gradient_accumulation_steps=int(CONFIG["gradient_accumulation_steps"])'
+        in decoded_script
+    )
+
+
+@pytest.mark.asyncio
 async def test_run_sft_template_requires_core_parameters(monkeypatch):
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
     monkeypatch.setenv("GOOGLE_CLOUD_REGION", "us-central1")
@@ -198,6 +254,28 @@ async def test_run_sft_template_requires_core_parameters(monkeypatch):
 
     assert result["isError"] is True
     assert "dataset_name is required" in result["formatted"]
+
+
+@pytest.mark.asyncio
+async def test_run_rejects_template_script_mix_and_unsupported_template(monkeypatch):
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv("GOOGLE_CLOUD_REGION", "us-central1")
+    monkeypatch.setenv("GCS_BUCKET", "liga-training")
+
+    tool = GcpVertexJobsTool(custom_job_cls=FakeCustomJob)
+
+    mixed = await tool.execute(
+        {"operation": "run", "template": "sft", "script": "print('nope')"}
+    )
+    unsupported = await tool.execute({"operation": "run", "template": "dpo"})
+
+    assert mixed["isError"] is True
+    assert (
+        "'template' cannot be combined with 'script' or 'command'."
+        in mixed["formatted"]
+    )
+    assert unsupported["isError"] is True
+    assert "Unsupported template: dpo" in unsupported["formatted"]
 
 
 @pytest.mark.asyncio

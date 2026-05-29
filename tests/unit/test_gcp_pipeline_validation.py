@@ -31,6 +31,58 @@ def test_validate_sft_template_request_rejects_risky_defaults():
     )
 
 
+def test_validate_sft_template_request_rejects_invalid_numeric_fields():
+    errors = validate_sft_template_request(
+        {
+            "dataset_name": "trl-lib/Capybara",
+            "model_name": "Qwen/Qwen2.5-0.5B-Instruct",
+            "hub_model_id": "ligaments-dev/test-model",
+            "num_train_epochs": 0,
+            "max_length": -1,
+            "learning_rate": 0,
+            "per_device_train_batch_size": 0,
+            "gradient_accumulation_steps": 0,
+            "max_train_samples": 0,
+            "max_eval_samples": -5,
+            "validation_split_ratio": 1,
+        }
+    )
+
+    assert "num_train_epochs must be positive" in errors
+    assert "max_length must be positive" in errors
+    assert "learning_rate must be positive" in errors
+    assert "per_device_train_batch_size must be positive" in errors
+    assert "gradient_accumulation_steps must be positive" in errors
+    assert "max_train_samples must be positive when provided" in errors
+    assert "max_eval_samples must be positive when provided" in errors
+    assert "validation_split_ratio must be greater than 0 and less than 1" in errors
+
+
+def test_validate_sft_template_request_validates_column_mapping_shape():
+    not_dict_errors = validate_sft_template_request(
+        {
+            "dataset_name": "trl-lib/Capybara",
+            "model_name": "Qwen/Qwen2.5-0.5B-Instruct",
+            "hub_model_id": "ligaments-dev/test-model",
+            "column_mapping": ["not", "a", "dict"],
+        }
+    )
+    bad_assistant_errors = validate_sft_template_request(
+        {
+            "dataset_name": "trl-lib/Capybara",
+            "model_name": "Qwen/Qwen2.5-0.5B-Instruct",
+            "hub_model_id": "ligaments-dev/test-model",
+            "column_mapping": {"assistant": ["answer", ""]},
+        }
+    )
+
+    assert "column_mapping must be an object" in not_dict_errors
+    assert (
+        "column_mapping.assistant must be a string or a list of non-empty strings"
+        in bad_assistant_errors
+    )
+
+
 def test_validate_sft_template_request_rejects_dummy_vertex_runs():
     errors = validate_sft_template_request(
         {

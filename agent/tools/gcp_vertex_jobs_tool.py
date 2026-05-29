@@ -209,14 +209,28 @@ class GcpVertexJobsTool:
                     dataset_name=str(args.get("dataset_name") or ""),
                     dataset_config=args.get("dataset_config"),
                     dataset_split=str(args.get("dataset_split") or "train"),
+                    eval_dataset_split=args.get("eval_dataset_split"),
+                    validation_split_ratio=float(
+                        args.get("validation_split_ratio") or 0.1
+                    ),
                     model_name=str(args.get("model_name") or ""),
                     hub_model_id=str(args.get("hub_model_id") or ""),
                     task_type=str(args.get("task_type") or "sft"),
                     column_mapping=dict(args.get("column_mapping") or {}),
                     max_train_samples=args.get("max_train_samples"),
+                    max_eval_samples=args.get("max_eval_samples"),
                     num_train_epochs=int(args.get("num_train_epochs") or 1),
+                    max_length=int(args.get("max_length") or 1024),
+                    learning_rate=float(args.get("learning_rate") or 2e-4),
+                    per_device_train_batch_size=int(
+                        args.get("per_device_train_batch_size") or 1
+                    ),
+                    gradient_accumulation_steps=int(
+                        args.get("gradient_accumulation_steps") or 8
+                    ),
                     trackio_project=args.get("trackio_project"),
                     trackio_space_id=args.get("trackio_space_id"),
+                    run_name=args.get("run_name"),
                 )
                 script = build_sft_training_script(template_config)
                 hf_model_target = template_config.hub_model_id
@@ -614,6 +628,21 @@ GCP_VERTEX_JOBS_TOOL_SPEC = {
                 "type": "string",
                 "description": "Dataset split for template='sft'. Default: train.",
             },
+            "eval_dataset_split": {
+                "type": "string",
+                "description": (
+                    "Optional explicit evaluation split for template='sft'. If omitted, "
+                    "the template creates a deterministic validation split for train "
+                    "datasets with at least 20 rows."
+                ),
+            },
+            "validation_split_ratio": {
+                "type": "number",
+                "description": (
+                    "Validation ratio used when eval_dataset_split is omitted and the "
+                    "training split has at least 20 rows. Must be > 0 and < 1. Default: 0.1."
+                ),
+            },
             "model_name": {
                 "type": "string",
                 "description": "Base model id for template='sft'.",
@@ -630,9 +659,33 @@ GCP_VERTEX_JOBS_TOOL_SPEC = {
                 "type": "integer",
                 "description": "Optional cap for template='sft' smoke or small runs.",
             },
+            "max_eval_samples": {
+                "type": "integer",
+                "description": "Optional cap for evaluation rows in template='sft'.",
+            },
             "num_train_epochs": {
                 "type": "integer",
                 "description": "Epoch count for template='sft'. Default: 1.",
+            },
+            "max_length": {
+                "type": "integer",
+                "description": "Maximum sequence length for template='sft'. Default: 1024.",
+            },
+            "learning_rate": {
+                "type": "number",
+                "description": "Learning rate for template='sft'. Default: 2e-4.",
+            },
+            "per_device_train_batch_size": {
+                "type": "integer",
+                "description": "Per-device train batch size for template='sft'. Default: 1.",
+            },
+            "gradient_accumulation_steps": {
+                "type": "integer",
+                "description": "Gradient accumulation steps for template='sft'. Default: 8.",
+            },
+            "run_name": {
+                "type": "string",
+                "description": "Optional Trainer/Trackio run name for template='sft'.",
             },
             "trackio_project": {
                 "type": "string",

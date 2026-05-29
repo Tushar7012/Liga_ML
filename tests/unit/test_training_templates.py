@@ -1,3 +1,5 @@
+import ast
+
 from agent.training_templates.sft import SftTemplateConfig, build_sft_training_script
 
 
@@ -23,7 +25,8 @@ def test_sft_template_generates_safe_vertex_training_script():
     assert 'DATASET_NAME = "FreedomIntelligence/medical-o1-reasoning-SFT"' in script
     assert 'MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"' in script
     assert 'HUB_MODEL_ID = "ligaments-dev/medical-qwen2.5-0.5b-sft"' in script
-    assert 'OUTPUT_DIR = os.environ.get("AIP_MODEL_DIR"' in script
+    assert 'os.environ.get("AIP_MODEL_DIR")' in script
+    assert 'os.environ.get("LIGA_ML_OUTPUT_DIR")' in script
     assert "packing=False" in script
     assert "max_length=1024" in script
     assert "gradient_checkpointing=True" in script
@@ -32,9 +35,9 @@ def test_sft_template_generates_safe_vertex_training_script():
     assert "push_to_hub=True" in script
     assert "trainer.push_to_hub" in script
     assert "api.upload_folder" in script
-    assert "upload_folder_to_gcs(final_dir, VERTEX_OUTPUT_DIR)" in script
-    assert "Final Hugging Face model:" in script
-    assert "Final GCS/Vertex output:" in script
+    assert "upload_folder_to_gcs(final_dir, gcs_output_dir)" in script
+    assert "LIGA_FINAL_MODEL_URL=" in script
+    assert "LIGA_GCS_OUTPUT_DIR=" in script
 
 
 def test_sft_template_uses_deterministic_dependency_install():
@@ -55,3 +58,78 @@ def test_sft_template_uses_deterministic_dependency_install():
     assert "subprocess.check_call" in script
     assert "for package in REQUIRED_PACKAGES:" not in script
     assert "*REQUIRED_PACKAGES" in script
+
+
+def test_sft_template_phase4_script_contract_static_checks():
+    script = build_sft_training_script(
+        SftTemplateConfig(
+            dataset_name="trl-lib/Capybara",
+            dataset_split="train",
+            eval_dataset_split="validation",
+            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            hub_model_id="ligaments-dev/test-model",
+            max_train_samples=25,
+            max_eval_samples=5,
+            validation_split_ratio=0.2,
+            max_length=768,
+            learning_rate=1e-4,
+            per_device_train_batch_size=2,
+            gradient_accumulation_steps=4,
+            run_name="phase4-smoke",
+        )
+    )
+
+    ast.parse(script)
+    assert (
+        "HF_TOKEN or HUGGINGFACE_HUB_TOKEN is required to load private datasets and push the final model to Hugging Face Hub."
+        in script
+    )
+    assert 'os.environ.get("LIGA_ML_SKIP_DEP_INSTALL") == "1"' in script
+    assert "eval_dataset_split" in script
+    assert "train_test_split" in script
+    assert "validation_split_ratio" in script
+    assert "AutoTokenizer.from_pretrained" in script
+    assert "AutoModelForCausalLM.from_pretrained" in script
+    assert "token=HF_TOKEN" in script
+    assert "processing_class=tokenizer" in script
+    assert "tokenizer=" not in script
+    assert "max_seq_length" not in script
+    assert "max_length=768" in script
+    assert "eval_strategy" in script
+    assert "evaluation_strategy" not in script
+    assert "push_to_hub=True" in script
+    assert "hub_model_id=HUB_MODEL_ID" in script
+    assert 'RESULT_FILE = Path("liga_training_result.json")' in script
+    assert "LIGA_TRAINING_STATUS=succeeded" in script
+    assert "LIGA_PROVIDER=gcp-vertex" in script
+    assert "LIGA_FINAL_MODEL_URL=https://huggingface.co/{HUB_MODEL_ID}" in script
+    assert "LIGA_HUB_MODEL_ID={HUB_MODEL_ID}" in script
+    assert "LIGA_GCS_OUTPUT_DIR={gcs_output_dir}" in script
+    assert "LIGA_EVAL_RESULT_JSON=" in script
+    assert "LIGA_RESULT_FILE=liga_training_result.json" in script
+    assert 'status = "partial_failure"' in script
+    assert "first_gs_uri(RAW_AIP_MODEL_DIR, RAW_LIGA_OUTPUT_DIR)" in script
+    assert "upload_folder_to_gcs(final_dir, gcs_output_dir)" in script
+
+
+def test_sft_template_formats_normalized_and_common_dataset_rows():
+    script = build_sft_training_script(
+        SftTemplateConfig(
+            dataset_name="ligaments-dev/normalized-upload",
+            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            hub_model_id="ligaments-dev/test-model",
+            column_mapping={"user": "question", "assistant": ["reasoning", "answer"]},
+        )
+    )
+
+    assert 'if "messages" in example:' in script
+    assert 'if "text" in example:' in script
+    assert '("prompt", "completion")' in script
+    assert '("instruction", "output")' in script
+    assert '("instruction", "response")' in script
+    assert '("input", "output")' in script
+    assert '("input", "response")' in script
+    assert '("question", "answer")' in script
+    assert "fallback_text_from_example" in script
+    assert "column_mapping" in script
+    assert "Mapped {kind} column is missing" in script
