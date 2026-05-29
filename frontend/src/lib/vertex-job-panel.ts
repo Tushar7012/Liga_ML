@@ -106,14 +106,22 @@ export function buildTrainingResultMarkdown(result: TrainingResult): string {
   ];
 
   if (result.evalResult !== undefined) {
-    sections.push(
-      '',
-      '**Evaluation result:**',
-      '',
-      '```json',
-      JSON.stringify(result.evalResult, null, 2),
-      '```',
-    );
+    if (
+      result.evalResult &&
+      typeof result.evalResult === 'object' &&
+      Object.keys(result.evalResult).length === 0
+    ) {
+      sections.push('', '**Evaluation result:** No evaluation metrics were reported; evaluation was skipped or empty.');
+    } else {
+      sections.push(
+        '',
+        '**Evaluation result:**',
+        '',
+        '```json',
+        JSON.stringify(result.evalResult, null, 2),
+        '```',
+      );
+    }
   }
 
   return sections.join('\n');

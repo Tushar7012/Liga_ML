@@ -397,10 +397,26 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
     setProviderAnchorEl(null);
   };
 
-  const handleSelectProvider = (provider: CloudProviderId) => {
+  const handleSelectProvider = async (provider: CloudProviderId) => {
     handleProviderClose();
     if (!sessionId) return;
+    const previousProvider = selectedCloudProvider;
     updateSessionCloudProvider(sessionId, provider);
+    try {
+      const res = await apiFetch(`/api/session/${sessionId}/cloud-provider`, {
+        method: 'POST',
+        body: JSON.stringify({ cloud_provider: provider }),
+      });
+      if (!res.ok) {
+        updateSessionCloudProvider(sessionId, previousProvider);
+        setModelSwitchError(await readApiErrorMessage(res, 'Could not switch training provider.'));
+        return;
+      }
+      setModelSwitchError(null);
+    } catch (error) {
+      updateSessionCloudProvider(sessionId, previousProvider);
+      setModelSwitchError(error instanceof Error ? error.message : 'Could not switch training provider.');
+    }
   };
 
   const handleSelectModel = async (model: ModelOption) => {

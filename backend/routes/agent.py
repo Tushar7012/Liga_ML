@@ -622,6 +622,30 @@ async def set_session_model(
     return {"session_id": session_id, "model": model_id}
 
 
+@router.post("/session/{session_id}/cloud-provider")
+async def set_session_cloud_provider(
+    session_id: str,
+    body: dict,
+    request: Request,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Switch the active training provider for a single session."""
+    await _check_session_access(session_id, user, request)
+    cloud_provider = body.get("cloud_provider")
+    if cloud_provider not in VALID_CLOUD_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Unknown cloud provider")
+    success = await session_manager.update_session_cloud_provider(
+        session_id, cloud_provider
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail="Session not found")
+    logger.info(
+        f"Session {session_id} cloud provider → {cloud_provider} "
+        f"(by {user.get('username', 'unknown')})"
+    )
+    return {"session_id": session_id, "cloud_provider": cloud_provider}
+
+
 @router.post("/session/{session_id}/notifications")
 async def set_session_notifications(
     session_id: str,

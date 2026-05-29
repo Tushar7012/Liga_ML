@@ -9,7 +9,7 @@ interface SessionStore {
   activeSessionId: string | null;
 
   // Actions
-  createSession: (id: string, model?: string | null) => void;
+  createSession: (id: string, model?: string | null, cloudProvider?: CloudProviderId | null) => void;
   deleteSession: (id: string) => void;
   switchSession: (id: string) => void;
   setSessionActive: (id: string, isActive: boolean) => void;
@@ -56,7 +56,7 @@ export const useSessionStore = create<SessionStore>()(
       sessions: [],
       activeSessionId: null,
 
-      createSession: (id: string, model?: string | null) => {
+      createSession: (id: string, model?: string | null, cloudProvider?: CloudProviderId | null) => {
         const newSession: SessionMeta = {
           id,
           title: `Chat ${get().sessions.length + 1}`,
@@ -64,7 +64,7 @@ export const useSessionStore = create<SessionStore>()(
           isActive: true,
           needsAttention: false,
           model: model ?? null,
-          cloudProvider: 'hf-jobs',
+          cloudProvider: cloudProvider ?? 'hf-jobs',
           autoApprovalEnabled: false,
           autoApprovalCostCapUsd: null,
           autoApprovalEstimatedSpendUsd: 0,

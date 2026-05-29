@@ -115,7 +115,7 @@ OUTPUT_DIR = (
     if VERTEX_OUTPUT_DIR.startswith("gs://")
     else VERTEX_OUTPUT_DIR
 )
-RESULT_FILE = Path("liga_training_result.json")
+RESULT_FILE_NAME = "liga_training_result.json"
 REQUIRED_PACKAGES = {packages_source}
 
 
@@ -283,7 +283,7 @@ def prepare_datasets():
     return train_dataset, eval_dataset
 
 
-def write_result(status, gcs_output_dir, eval_metrics, train_rows, eval_rows):
+def write_result(final_dir, status, gcs_output_dir, eval_metrics, train_rows, eval_rows):
     result = {{
         "status": status,
         "provider": "gcp-vertex",
@@ -294,7 +294,9 @@ def write_result(status, gcs_output_dir, eval_metrics, train_rows, eval_rows):
         "train_rows": train_rows,
         "eval_rows": eval_rows,
     }}
-    RESULT_FILE.write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
+    final_dir.mkdir(parents=True, exist_ok=True)
+    result_path = final_dir / RESULT_FILE_NAME
+    result_path.write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
     return result
 
 
@@ -365,6 +367,17 @@ def main() -> None:
 
     trainer.push_to_hub()
 
+    gcs_output_dir = first_gs_uri(RAW_AIP_MODEL_DIR, RAW_LIGA_OUTPUT_DIR)
+    status = "succeeded"
+    write_result(
+        final_dir,
+        status,
+        gcs_output_dir,
+        eval_metrics,
+        len(train_dataset),
+        len(eval_dataset) if eval_dataset is not None else 0,
+    )
+
     api = HfApi()
     api.upload_folder(
         folder_path=str(final_dir),
@@ -372,13 +385,12 @@ def main() -> None:
         repo_type="model",
         token=HF_TOKEN,
     )
-    gcs_output_dir = first_gs_uri(RAW_AIP_MODEL_DIR, RAW_LIGA_OUTPUT_DIR)
-    status = "succeeded"
     try:
         upload_folder_to_gcs(final_dir, gcs_output_dir)
     except Exception as exc:
         status = "partial_failure"
         write_result(
+            final_dir,
             status,
             gcs_output_dir,
             eval_metrics,
@@ -389,13 +401,6 @@ def main() -> None:
             f"Model pushed to Hugging Face Hub, but GCS final artifact upload failed: {{exc}}"
         ) from exc
 
-    write_result(
-        status,
-        gcs_output_dir,
-        eval_metrics,
-        len(train_dataset),
-        len(eval_dataset) if eval_dataset is not None else 0,
-    )
     eval_json = json.dumps(eval_metrics, separators=(",", ":"), sort_keys=True)
     print("LIGA_TRAINING_STATUS=succeeded", flush=True)
     print("LIGA_PROVIDER=gcp-vertex", flush=True)
@@ -403,7 +408,7 @@ def main() -> None:
     print(f"LIGA_HUB_MODEL_ID={{HUB_MODEL_ID}}", flush=True)
     print(f"LIGA_GCS_OUTPUT_DIR={{gcs_output_dir}}", flush=True)
     print(f"LIGA_EVAL_RESULT_JSON={{eval_json}}", flush=True)
-    print("LIGA_RESULT_FILE=liga_training_result.json", flush=True)
+    print(f"LIGA_RESULT_FILE={{RESULT_FILE_NAME}}", flush=True)
 
 
 if __name__ == "__main__":

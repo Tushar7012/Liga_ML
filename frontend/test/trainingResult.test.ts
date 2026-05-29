@@ -47,6 +47,20 @@ test('returns null when no final result markers exist', () => {
   );
 });
 
+test('parses missing optional markers and empty eval object generically', () => {
+  const result = parseLigaTrainingResult(`
+LIGA_TRAINING_STATUS=succeeded
+LIGA_PROVIDER=gcp-vertex
+LIGA_EVAL_RESULT_JSON={}
+`);
+
+  assert.deepEqual(result, {
+    status: 'succeeded',
+    provider: 'gcp-vertex',
+    evalResult: {},
+  });
+});
+
 test('strips safe trailing URL punctuation from marked final model URL', () => {
   const result = parseLigaTrainingResult(
     'LIGA_FINAL_MODEL_URL=https://huggingface.co/alice/model),',

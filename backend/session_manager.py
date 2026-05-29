@@ -1137,6 +1137,17 @@ class SessionManager:
         await self.persist_session_snapshot(agent_session, runtime_state="idle")
         return True
 
+    async def update_session_cloud_provider(
+        self, session_id: str, cloud_provider: str
+    ) -> bool:
+        agent_session = self.sessions.get(session_id)
+        if not agent_session or not agent_session.is_active:
+            return False
+        agent_session.cloud_provider = cloud_provider
+        agent_session.session.cloud_provider = cloud_provider
+        await self.persist_session_snapshot(agent_session, runtime_state="idle")
+        return True
+
     async def update_session_auto_approval(
         self,
         session_id: str,

@@ -646,6 +646,40 @@ function InlineApproval({
         );
       })()}
 
+      {toolName === 'gcp_vertex_jobs' && args && (() => {
+        const operation = String(args.operation || '').toLowerCase();
+        if (operation !== 'run' && operation !== 'cancel') return null;
+        const maxRunHours = args.max_run_hours ?? args.timeout_hours;
+        return (
+          <Box sx={{ mb: 1.5 }}>
+            <Typography variant="body2" sx={{ color: 'var(--muted-text)', fontSize: '0.75rem', mb: 0.5 }}>
+              {operation === 'cancel'
+                ? 'Cancel this Vertex AI job only after manual approval.'
+                : 'Launch a billable Vertex AI job only after manual approval.'}
+            </Typography>
+            {maxRunHours !== undefined && maxRunHours !== null && (
+              <Typography variant="body2" sx={{ color: 'var(--muted-text)', fontSize: '0.7rem', opacity: 0.8 }}>
+                Max runtime for approval guardrails:{' '}
+                <Box component="span" sx={{ color: 'var(--text)', fontWeight: 500 }}>
+                  {String(maxRunHours)} hour{Number(maxRunHours) === 1 ? '' : 's'}
+                </Box>
+              </Typography>
+            )}
+            {autoApproval?.estimatedCostUsd !== undefined && autoApproval.estimatedCostUsd !== null && (
+              <Typography variant="body2" sx={{ color: 'var(--muted-text)', fontSize: '0.7rem', opacity: 0.8 }}>
+                Estimated cost:{' '}
+                <Box component="span" sx={{ color: 'var(--accent-yellow)', fontWeight: 500 }}>
+                  ${autoApproval.estimatedCostUsd.toFixed(2)}
+                </Box>
+                {autoApproval.remainingCapUsd !== undefined && autoApproval.remainingCapUsd !== null && (
+                  <> · Remaining auto-approval cap: ${autoApproval.remainingCapUsd.toFixed(2)}</>
+                )}
+              </Typography>
+            )}
+          </Box>
+        );
+      })()}
+
       <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
         <TextField
           fullWidth

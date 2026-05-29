@@ -99,17 +99,35 @@ def test_sft_template_phase4_script_contract_static_checks():
     assert "evaluation_strategy" not in script
     assert "push_to_hub=True" in script
     assert "hub_model_id=HUB_MODEL_ID" in script
-    assert 'RESULT_FILE = Path("liga_training_result.json")' in script
+    assert 'RESULT_FILE_NAME = "liga_training_result.json"' in script
     assert "LIGA_TRAINING_STATUS=succeeded" in script
     assert "LIGA_PROVIDER=gcp-vertex" in script
     assert "LIGA_FINAL_MODEL_URL=https://huggingface.co/{HUB_MODEL_ID}" in script
     assert "LIGA_HUB_MODEL_ID={HUB_MODEL_ID}" in script
     assert "LIGA_GCS_OUTPUT_DIR={gcs_output_dir}" in script
     assert "LIGA_EVAL_RESULT_JSON=" in script
-    assert "LIGA_RESULT_FILE=liga_training_result.json" in script
+    assert 'print(f"LIGA_RESULT_FILE={RESULT_FILE_NAME}"' in script
     assert 'status = "partial_failure"' in script
     assert "first_gs_uri(RAW_AIP_MODEL_DIR, RAW_LIGA_OUTPUT_DIR)" in script
     assert "upload_folder_to_gcs(final_dir, gcs_output_dir)" in script
+
+
+def test_sft_template_writes_result_file_inside_uploaded_final_artifacts():
+    script = build_sft_training_script(
+        SftTemplateConfig(
+            dataset_name="example/dataset",
+            model_name="example/model",
+            hub_model_id="example/output-model",
+        )
+    )
+
+    assert 'RESULT_FILE_NAME = "liga_training_result.json"' in script
+    assert "result_path = final_dir / RESULT_FILE_NAME" in script
+    assert "result_path.write_text" in script
+    first_write_call = script.index("\n    write_result(")
+    assert first_write_call < script.index("api.upload_folder(")
+    assert first_write_call < script.index("\n        upload_folder_to_gcs(")
+    assert 'print(f"LIGA_RESULT_FILE={RESULT_FILE_NAME}"' in script
 
 
 def test_sft_template_formats_normalized_and_common_dataset_rows():

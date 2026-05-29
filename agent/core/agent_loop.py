@@ -640,6 +640,147 @@ def _friendly_error_message(error: Exception) -> str | None:
     return None
 
 
+def _llm_error_type(error: Exception) -> str:
+    """Classify provider failures for structured UI handling."""
+
+    err_str = str(error).lower()
+    quota_billing_patterns = (
+        "quota",
+        "billing",
+        "credit",
+        "insufficient",
+        "spending limit",
+        "monthly spending",
+        "exceeded your monthly",
+    )
+    if any(
+        pattern in err_str
+        for pattern in (
+            "401",
+            "403",
+            "authentication",
+            "unauthorized",
+            "forbidden",
+            "invalid x-api-key",
+            "invalid api key",
+            "api key",
+            "permission",
+        )
+    ):
+        if any(pattern in err_str for pattern in quota_billing_patterns):
+            return "quota_or_billing"
+        return "auth"
+    if any(pattern in err_str for pattern in quota_billing_patterns):
+        return "quota_or_billing"
+    if _is_rate_limit_error(error):
+        return "rate_limit"
+    if any(
+        pattern in err_str
+        for pattern in (
+            "timeout",
+            "timed out",
+            "network",
+            "connection",
+            "eof",
+            "broken pipe",
+            "service unavailable",
+            "bad gateway",
+        )
+    ):
+        return "network"
+    return "unknown"
+
+
+def _llm_failure_message(
+    error: Exception,
+    *,
+    model_name: str,
+    include_traceback: bool = False,
+) -> tuple[str, str]:
+    """Return (error_type, visible message) for failed LLM calls."""
+
+    error_type = _llm_error_type(error)
+    raw = str(error).strip()
+    if error_type == "quota_or_billing":
+        message = (
+            "The selected model provider rejected the request because of quota, "
+            "billing, or credits. Switch to another model, or fix the provider "
+            "quota/billing state, then retry.\n\n"
+            f"Model: {model_name}\nProvider error: {raw}"
+        )
+    elif error_type == "auth":
+        message = (
+            "The selected model provider rejected the request because credentials "
+            "or permissions are missing or invalid. Switch to a configured model "
+            "or update the provider credentials, then retry.\n\n"
+            f"Model: {model_name}\nProvider error: {raw}"
+        )
+    elif error_type == "rate_limit":
+        message = (
+            "The selected model provider rate-limited this request. Wait a bit, "
+            "switch to another model, or retry with a shorter request.\n\n"
+            f"Model: {model_name}\nProvider error: {raw}"
+        )
+    elif error_type == "network":
+        message = (
+            "The selected model provider could not be reached reliably. Retry, "
+            "or switch models if the provider stays unavailable.\n\n"
+            f"Model: {model_name}\nProvider error: {raw}"
+        )
+    else:
+        friendly = _friendly_error_message(error)
+        if friendly:
+            message = friendly
+        else:
+            message = (
+                "The selected model failed before returning a usable response. "
+                "No tool was launched. Switch models or retry after checking the "
+                "provider status.\n\n"
+                f"Model: {model_name}\nError: {raw}"
+            )
+            if include_traceback:
+                import traceback
+
+                message += "\n\n" + traceback.format_exc()
+    return error_type, message
+
+
+def _empty_llm_response_message(*, model_name: str, finish_reason: str | None) -> str:
+    reason = f" Finish reason: {finish_reason}." if finish_reason else ""
+    return (
+        "The selected model returned an empty response with no tool calls, so I "
+        "stopped instead of showing a blank assistant message. Switch to another "
+        "model or retry the request; if it repeats, the provider may be having "
+        f"issues.\n\nModel: {model_name}.{reason}"
+    )
+
+
+async def _emit_visible_error(
+    session: Session,
+    message: str,
+    *,
+    error_type: str,
+    model_name: str | None = None,
+) -> None:
+    """Emit an assistant-visible message and a structured error event."""
+
+    assistant_msg = Message(role="assistant", content=message)
+    session.context_manager.add_message(assistant_msg)
+    await session.send_event(
+        Event(event_type="assistant_message", data={"content": message})
+    )
+    await session.send_event(
+        Event(
+            event_type="error",
+            data={
+                "error": message,
+                "error_type": error_type,
+                "model": model_name or session.config.model_name,
+            },
+        )
+    )
+
+
 async def _compact_and_notify(session: Session) -> None:
     """Run compaction and send event if context was reduced.
 
@@ -1394,6 +1535,20 @@ class Handlers:
 
                 # If no tool calls, add assistant message and we're done
                 if not tool_calls:
+                    if not content:
+                        error_msg = _empty_llm_response_message(
+                            model_name=session.config.model_name,
+                            finish_reason=finish_reason,
+                        )
+                        await _emit_visible_error(
+                            session,
+                            error_msg,
+                            error_type="empty_response",
+                            model_name=session.config.model_name,
+                        )
+                        errored = True
+                        break
+
                     unfinished_plan = _unfinished_plan_items(session)
                     if (
                         unfinished_plan
@@ -1762,17 +1917,16 @@ class Handlers:
                 continue
 
             except Exception as e:
-                import traceback
-
-                error_msg = _friendly_error_message(e)
-                if error_msg is None:
-                    error_msg = str(e) + "\n" + traceback.format_exc()
-
-                await session.send_event(
-                    Event(
-                        event_type="error",
-                        data={"error": error_msg},
-                    )
+                error_type, error_msg = _llm_failure_message(
+                    e,
+                    model_name=session.config.model_name,
+                    include_traceback=True,
+                )
+                await _emit_visible_error(
+                    session,
+                    error_msg,
+                    error_type=error_type,
+                    model_name=session.config.model_name,
                 )
                 errored = True
                 break
@@ -2113,19 +2267,31 @@ async def process_submission(session: Session, submission) -> bool:
         text = op.data.get("text", "") if op.data else ""
         cloud_provider = op.data.get("cloud_provider") if op.data else None
         if cloud_provider in {"hf-jobs", "gcp-vertex"}:
-            provider_label = (
-                "Google Cloud Vertex AI (use gcp_vertex_jobs for training jobs)"
-                if cloud_provider == "gcp-vertex"
-                else "Hugging Face Jobs (use hf_jobs for training jobs)"
-            )
+            if cloud_provider == "gcp-vertex":
+                provider_instruction = (
+                    "The frontend training provider selector for this session is "
+                    "set to Google Cloud Vertex AI. For training, fine-tuning, "
+                    "SFT, model adaptation, cloud compute, or model training job "
+                    "requests, prepare a concise preflight, use the normalized "
+                    "uploaded dataset config from this session when one is "
+                    "available, and call gcp_vertex_jobs rather than hf_jobs. "
+                    "gcp_vertex_jobs run and cancel operations are approval-gated "
+                    "and billable; do not launch them without approval. For "
+                    "non-training requests, use the normal best-fit tools."
+                )
+            else:
+                provider_instruction = (
+                    "The frontend training provider selector for this session is "
+                    "set to Hugging Face Jobs. For training, fine-tuning, SFT, "
+                    "model adaptation, cloud compute, or model training job "
+                    "requests, prefer hf_jobs unless the user explicitly asks "
+                    "for another backend. Use uploaded dataset context from this "
+                    "session when one is available."
+                )
             session.context_manager.add_message(
                 Message(
                     role="user",
-                    content=(
-                        "[SYSTEM: The frontend training provider selector for "
-                        f"this session is set to {provider_label}. Prefer that "
-                        "backend when the user asks to fine-tune or run training.]"
-                    ),
+                    content=f"[SYSTEM: {provider_instruction}]",
                 )
             )
         await Handlers.run_agent(session, text)
