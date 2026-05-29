@@ -242,6 +242,8 @@ Note: Environment variables like `${YOUR_TOKEN}` are auto-substituted from `.env
 
 Liga ML can run training on either Hugging Face Jobs or Google Cloud Vertex AI. Hugging Face remains the common model registry: whether a model is trained on HF compute or Vertex AI, the final successful model should be pushed back to Hugging Face Hub.
 
+For production Cloud Run and Vertex AI setup, see [Google Cloud deployment](docs/google-cloud-deployment.md).
+
 ### Workflow
 
 ```mermaid
