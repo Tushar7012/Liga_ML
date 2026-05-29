@@ -35,6 +35,10 @@ from agent.tools.github_read_file import (
     GITHUB_READ_FILE_TOOL_SPEC,
     github_read_file_handler,
 )
+from agent.tools.gcp_vertex_jobs_tool import (
+    GCP_VERTEX_JOBS_TOOL_SPEC,
+    gcp_vertex_jobs_handler,
+)
 from agent.tools.hf_repo_files_tool import (
     HF_REPO_FILES_TOOL_SPEC,
     hf_repo_files_handler,
@@ -352,6 +356,12 @@ def create_builtin_tools(local_mode: bool = False) -> list[ToolSpec]:
             description=HF_JOBS_TOOL_SPEC["description"],
             parameters=HF_JOBS_TOOL_SPEC["parameters"],
             handler=hf_jobs_handler,
+        ),
+        ToolSpec(
+            name=GCP_VERTEX_JOBS_TOOL_SPEC["name"],
+            description=GCP_VERTEX_JOBS_TOOL_SPEC["description"],
+            parameters=GCP_VERTEX_JOBS_TOOL_SPEC["parameters"],
+            handler=gcp_vertex_jobs_handler,
         ),
         # HF Repo management tools
         ToolSpec(
