@@ -1,4 +1,5 @@
 import type { PanelData } from '@/store/agentStore';
+import { parseLigaTrainingResult, type TrainingResult } from '@/utils/trainingResult';
 
 export interface VertexToolState {
   state?: string;
@@ -21,6 +22,7 @@ const VERTEX_SUMMARY_FIELDS = [
   ['Trackio project', 'trackio_project'],
   ['Trackio Space', 'trackio_space_id'],
 ] as const;
+const TRAINING_RESULT_HEADING = '## Liga Training Result';
 
 function valueToString(value: unknown): string | null {
   if (value === undefined || value === null || value === '') return null;
@@ -69,6 +71,64 @@ export function buildVertexStateMarkdown(state: VertexToolState): string {
     '| --- | --- |',
     ...rows,
   ].join('\n');
+}
+
+function resultValue(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  return String(value);
+}
+
+export function buildTrainingResultMarkdown(result: TrainingResult): string {
+  const rows = [
+    ['Status', result.status],
+    ['Provider', result.provider],
+    ['Final HF model', result.finalModelUrl],
+    ['Hub model ID', result.hubModelId],
+    ['GCS output directory', result.gcsOutputDir],
+    ['Result file', result.resultFile],
+  ]
+    .map(([label, value]) => {
+      const text = resultValue(value);
+      if (!text) return null;
+      const rendered = label === 'Final HF model' && text.startsWith('https://')
+        ? `[${text}](${text})`
+        : `\`${text}\``;
+      return `| ${label} | ${rendered} |`;
+    })
+    .filter((row): row is string => Boolean(row));
+
+  const sections = [
+    TRAINING_RESULT_HEADING,
+    '',
+    '| Field | Value |',
+    '| --- | --- |',
+    ...rows,
+  ];
+
+  if (result.evalResult !== undefined) {
+    sections.push(
+      '',
+      '**Evaluation result:**',
+      '',
+      '```json',
+      JSON.stringify(result.evalResult, null, 2),
+      '```',
+    );
+  }
+
+  return sections.join('\n');
+}
+
+export function appendTrainingResultSummary(output: string): string {
+  const result = parseLigaTrainingResult(output);
+  const withoutPreviousSummary = output
+    .replace(new RegExp(`\\n*${TRAINING_RESULT_HEADING}[\\s\\S]*$`), '')
+    .trimEnd();
+
+  if (!result) return withoutPreviousSummary || output;
+  return [withoutPreviousSummary, buildTrainingResultMarkdown(result)]
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 export function createVertexRunPanel(args: Record<string, unknown>): {

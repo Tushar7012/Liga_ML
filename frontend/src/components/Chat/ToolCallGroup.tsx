@@ -11,7 +11,7 @@ import { useAgentStore, type ResearchAgentState } from '@/store/agentStore';
 import { useLayoutStore } from '@/store/layoutStore';
 import { logger } from '@/utils/logger';
 import { RESEARCH_MAX_STEPS } from '@/lib/research-store';
-import { buildVertexStateMarkdown, createVertexRunPanel } from '@/lib/vertex-job-panel';
+import { appendTrainingResultSummary, buildVertexStateMarkdown, createVertexRunPanel } from '@/lib/vertex-job-panel';
 import type { UIMessage } from 'ai';
 
 // ---------------------------------------------------------------------------
@@ -931,9 +931,9 @@ export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProp
         const jobOutput = tool.output ?? (tool.state === 'output-error' ? (tool as Record<string, unknown>).errorText : undefined);
         const runtimeState = getJobRuntimeState(tool.toolCallId);
         const stateMarkdown = buildVertexStateMarkdown(runtimeState || {});
-        const outputContent = [jobOutput ? String(jobOutput) : '', stateMarkdown]
+        const outputContent = appendTrainingResultSummary([jobOutput ? String(jobOutput) : '', stateMarkdown]
           .filter(Boolean)
-          .join('\n\n');
+          .join('\n\n'));
 
         if (vertexPanel) {
           setPanel(

@@ -20,7 +20,7 @@ import { useAgentStore } from '@/store/agentStore';
 import { useSessionStore } from '@/store/sessionStore';
 import { useLayoutStore } from '@/store/layoutStore';
 import { logger } from '@/utils/logger';
-import { buildVertexStateMarkdown, createVertexRunPanel } from '@/lib/vertex-job-panel';
+import { appendTrainingResultSummary, buildVertexStateMarkdown, createVertexRunPanel } from '@/lib/vertex-job-panel';
 import type { ToolStateChangeEventData } from '@/types/events';
 
 interface UseAgentChatOptions {
@@ -160,7 +160,10 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
         const sessState = useAgentStore.getState().getSessionState(sessionId);
         const existingOutput = sessState.panelData?.output?.content || '';
 
-        const newContent = appendPanelOutput(existingOutput, log);
+        const rawNewContent = appendPanelOutput(existingOutput, log);
+        const newContent = tool === 'gcp_vertex_jobs'
+          ? appendTrainingResultSummary(rawNewContent)
+          : rawNewContent;
 
         if (!sessState.panelData) {
           const title = tool === 'bash' || tool === 'sandbox'
@@ -321,10 +324,11 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
             panelView: !success ? 'output' : sessState.panelView,
           });
         } else if (toolName === 'gcp_vertex_jobs' && output) {
+          const content = appendTrainingResultSummary(output);
           updateSession(sessionId, {
             panelData: sessState.panelData
-              ? { ...sessState.panelData, output: { content: output, language: 'markdown' } }
-              : { title: 'Vertex AI Job Output', output: { content: output, language: 'markdown' } },
+              ? { ...sessState.panelData, output: { content, language: 'markdown' } }
+              : { title: 'Vertex AI Job Output', output: { content, language: 'markdown' } },
             panelView: !success ? 'output' : sessState.panelView,
             panelEditable: false,
           });
@@ -362,9 +366,10 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
         if (!stateMarkdown) return;
 
         const existingOutput = sessState.panelData?.output?.content || '';
-        const content = existingOutput.includes('## Vertex AI Job State')
+        const rawContent = existingOutput.includes('## Vertex AI Job State')
           ? existingOutput.replace(/## Vertex AI Job State[\s\S]*$/m, stateMarkdown)
           : appendPanelOutput(existingOutput, stateMarkdown);
+        const content = appendTrainingResultSummary(rawContent);
 
         updateSession(sessionId, {
           panelData: sessState.panelData

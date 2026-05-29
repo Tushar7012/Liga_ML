@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test:training-result": "node -e \"require('fs').rmSync('.training-result-test', { recursive: true, force: true })\" && tsc --module NodeNext --moduleResolution NodeNext --target ES2022 --outDir .training-result-test --noEmit false --allowImportingTsExtensions false src/utils/trainingResult.ts test/trainingResult.test.ts && node --test .training-result-test/test/trainingResult.test.js && node -e \"require('fs').rmSync('.training-result-test', { recursive: true, force: true })\"",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -25,6 +26,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
+    "@types/node": "^25.9.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/react-syntax-highlighter": "^15.5.13",
