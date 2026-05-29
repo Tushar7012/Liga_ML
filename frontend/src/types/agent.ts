@@ -13,6 +13,29 @@ export interface MessageMeta {
 
 export type CloudProviderId = 'hf-jobs' | 'gcp-vertex';
 
+export type DatasetSourceFormat = 'csv' | 'json' | 'jsonl' | 'pdf' | 'docx' | 'xlsx';
+
+export interface DatasetUploadResponse {
+  session_id: string;
+  repo_id: string;
+  repo_type: 'dataset';
+  private: true;
+  upload_id: string;
+  config_name: string;
+  filename: string;
+  path_in_repo: string;
+  raw_path_in_repo: string;
+  normalized_path_in_repo: string;
+  normalized_format: 'jsonl';
+  normalized_row_count: number;
+  source_format: DatasetSourceFormat;
+  supports_training: boolean;
+  size_bytes: number;
+  format: DatasetSourceFormat;
+  hub_url: string;
+  load_dataset_snippet: string;
+}
+
 export interface SessionMeta {
   id: string;
   title: string;

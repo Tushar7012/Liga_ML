@@ -33,7 +33,7 @@ import {
   isClaudePath,
   isPremiumPath,
 } from '@/utils/model';
-import type { CloudProviderId } from '@/types/agent';
+import type { CloudProviderId, DatasetUploadResponse } from '@/types/agent';
 
 // Model configuration
 interface ModelOption {
@@ -146,24 +146,9 @@ interface ChatInputProps {
   placeholder?: string;
 }
 
-interface DatasetUploadResponse {
-  session_id: string;
-  repo_id: string;
-  repo_type: 'dataset';
-  private: true;
-  upload_id: string;
-  config_name: string;
-  filename: string;
-  path_in_repo: string;
-  size_bytes: number;
-  format: 'csv' | 'json' | 'jsonl';
-  hub_url: string;
-  load_dataset_snippet: string;
-}
-
 const MAX_DATASET_UPLOAD_BYTES = 100 * 1024 * 1024;
-const DATASET_UPLOAD_ACCEPT = '.csv,.json,.jsonl';
-const DATASET_UPLOAD_EXTENSIONS = new Set(['csv', 'json', 'jsonl']);
+const DATASET_UPLOAD_ACCEPT = '.csv,.json,.jsonl,.pdf,.docx,.xlsx';
+const DATASET_UPLOAD_EXTENSIONS = new Set(['csv', 'json', 'jsonl', 'pdf', 'docx', 'xlsx']);
 
 const isClaudeModel = (m: ModelOption) => isClaudePath(m.modelPath);
 const isPremiumModel = (m: ModelOption) => isPremiumPath(m.modelPath);
@@ -310,7 +295,7 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
 
       const extension = file.name.split('.').pop()?.toLowerCase() || '';
       if (!DATASET_UPLOAD_EXTENSIONS.has(extension)) {
-        setDatasetUploadError('Only CSV, JSON, and JSONL dataset files are supported.');
+        setDatasetUploadError('Only CSV, JSON, JSONL, PDF, DOCX, and XLSX dataset files are supported.');
         return;
       }
       if (file.size > MAX_DATASET_UPLOAD_BYTES) {
@@ -342,7 +327,10 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
         }
         const payload = await res.json() as DatasetUploadResponse;
         setUploadedDatasets((previous) => [payload, ...previous]);
-        setDatasetUploadSuccess(`Uploaded ${payload.filename} to ${payload.repo_id}`);
+        const rowSummary = typeof payload.normalized_row_count === 'number'
+          ? ` (${payload.normalized_row_count.toLocaleString()} normalized rows)`
+          : '';
+        setDatasetUploadSuccess(`Uploaded ${payload.filename}${rowSummary} to ${payload.repo_id}`);
         await onDatasetUploaded?.();
       } catch (error) {
         setDatasetUploadError(

@@ -136,8 +136,14 @@ class DatasetUploadResponse(BaseModel):
     config_name: str
     filename: str
     path_in_repo: str
+    raw_path_in_repo: str
+    normalized_path_in_repo: str
+    normalized_format: Literal["jsonl"]
+    normalized_row_count: int
+    source_format: Literal["csv", "json", "jsonl", "pdf", "docx", "xlsx"]
+    supports_training: bool
     size_bytes: int
-    format: Literal["csv", "json", "jsonl"]
+    format: Literal["csv", "json", "jsonl", "pdf", "docx", "xlsx"]
     hub_url: str
     load_dataset_snippet: str
 
