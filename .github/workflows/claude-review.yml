@@ -18,6 +18,8 @@ jobs:
   review:
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,6 +67,7 @@ jobs:
         run: mkdir -p "$HOME/.local/bin"
 
       - uses: anthropics/claude-code-action@v1
+        if: env.ANTHROPIC_API_KEY != ''
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # Bypass the OIDC -> Claude GitHub App token exchange. That exchange
@@ -76,3 +79,8 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           track_progress: true
           prompt: ${{ steps.compose.outputs.prompt }}
+
+      - name: Skip Claude review when secret is missing
+        if: env.ANTHROPIC_API_KEY == ''
+        run: |
+          echo "::notice::Skipping Claude PR Review because ANTHROPIC_API_KEY is not configured."
