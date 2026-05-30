@@ -680,6 +680,39 @@ function InlineApproval({
         );
       })()}
 
+      {toolName === 'aws_sagemaker_jobs' && args && (() => {
+        const operation = String(args.operation || '').toLowerCase();
+        if (operation !== 'run' && operation !== 'cancel') return null;
+        return (
+          <Box sx={{ mb: 1.5 }}>
+            <Typography variant="body2" sx={{ color: 'var(--muted-text)', fontSize: '0.75rem', mb: 0.5 }}>
+              {operation === 'cancel'
+                ? 'Cancel this SageMaker job only after manual approval.'
+                : 'Validate a billable SageMaker run request only after approval. Phase 2 will not submit a real AWS job.'}
+            </Typography>
+            {args.max_run_seconds !== undefined && args.max_run_seconds !== null && (
+              <Typography variant="body2" sx={{ color: 'var(--muted-text)', fontSize: '0.7rem', opacity: 0.8 }}>
+                Max runtime for approval guardrails:{' '}
+                <Box component="span" sx={{ color: 'var(--text)', fontWeight: 500 }}>
+                  {String(args.max_run_seconds)} seconds
+                </Box>
+              </Typography>
+            )}
+            {autoApproval?.estimatedCostUsd !== undefined && autoApproval.estimatedCostUsd !== null && (
+              <Typography variant="body2" sx={{ color: 'var(--muted-text)', fontSize: '0.7rem', opacity: 0.8 }}>
+                Estimated cost:{' '}
+                <Box component="span" sx={{ color: 'var(--accent-yellow)', fontWeight: 500 }}>
+                  ${autoApproval.estimatedCostUsd.toFixed(2)}
+                </Box>
+                {autoApproval.remainingCapUsd !== undefined && autoApproval.remainingCapUsd !== null && (
+                  <> · Remaining auto-approval cap: ${autoApproval.remainingCapUsd.toFixed(2)}</>
+                )}
+              </Typography>
+            )}
+          </Box>
+        );
+      })()}
+
       <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
         <TextField
           fullWidth
@@ -860,6 +893,8 @@ export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProp
         displayMap[t.toolCallId] = 'research';
       } else if (t.toolName === 'gcp_vertex_jobs') {
         displayMap[t.toolCallId] = 'Vertex AI Job';
+      } else if (t.toolName === 'aws_sagemaker_jobs') {
+        displayMap[t.toolCallId] = 'AWS SageMaker Job';
       }
     }
     return { scriptLabelMap: scriptMap, toolDisplayMap: displayMap };

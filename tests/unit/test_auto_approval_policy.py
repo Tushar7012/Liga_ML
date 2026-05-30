@@ -85,6 +85,30 @@ def test_gcp_vertex_read_only_operations_do_not_require_approval():
         )
 
 
+def test_aws_sagemaker_run_and_cancel_require_approval():
+    config = _config(confirm_cpu_jobs=False)
+
+    assert agent_loop._needs_approval(
+        "aws_sagemaker_jobs", {"operation": "run"}, config
+    )
+    assert agent_loop._needs_approval(
+        "aws_sagemaker_jobs",
+        {"operation": "cancel", "job_name": "training-job"},
+        config,
+    )
+
+
+def test_aws_sagemaker_read_only_operations_do_not_require_approval():
+    config = _config(confirm_cpu_jobs=True)
+
+    for operation in ["ps", "logs", "inspect"]:
+        assert not agent_loop._needs_approval(
+            "aws_sagemaker_jobs",
+            {"operation": operation, "job_name": "training-job"},
+            config,
+        )
+
+
 def test_existing_sandbox_approval_behavior_is_unchanged():
     config = _config()
 
@@ -152,6 +176,63 @@ async def test_gcp_vertex_unknown_cost_blocks_auto_approval(monkeypatch):
     assert decision.requires_approval is True
     assert decision.auto_approval_blocked is True
     assert "max_run_hours" in decision.block_reason
+
+
+@pytest.mark.asyncio
+async def test_aws_sagemaker_job_under_cap_auto_runs_when_cost_is_known(monkeypatch):
+    async def fake_estimate(*args, **kwargs):
+        return CostEstimate(estimated_cost_usd=1.5, billable=True)
+
+    monkeypatch.setattr(agent_loop, "estimate_tool_cost", fake_estimate)
+
+    decision = await agent_loop._approval_decision(
+        "aws_sagemaker_jobs",
+        {
+            "operation": "run",
+            "instance_type": "ml.g5.xlarge",
+            "max_run_seconds": 3600,
+        },
+        _session(cap=5.0, spent=1.0),
+    )
+
+    assert decision.requires_approval is False
+    assert decision.auto_approved is True
+    assert decision.estimated_cost_usd == 1.5
+
+
+@pytest.mark.asyncio
+async def test_aws_sagemaker_unknown_cost_blocks_auto_approval(monkeypatch):
+    async def fake_estimate(*args, **kwargs):
+        return CostEstimate(
+            estimated_cost_usd=None,
+            billable=True,
+            block_reason="SageMaker jobs need max_run_seconds.",
+        )
+
+    monkeypatch.setattr(agent_loop, "estimate_tool_cost", fake_estimate)
+
+    decision = await agent_loop._approval_decision(
+        "aws_sagemaker_jobs",
+        {"operation": "run", "instance_type": "ml.g5.xlarge"},
+        _session(cap=5.0, spent=0.0),
+    )
+
+    assert decision.requires_approval is True
+    assert decision.auto_approval_blocked is True
+    assert "max_run_seconds" in decision.block_reason
+
+
+@pytest.mark.asyncio
+async def test_aws_sagemaker_cancel_stays_manual_with_auto_approval():
+    decision = await agent_loop._approval_decision(
+        "aws_sagemaker_jobs",
+        {"operation": "cancel", "job_name": "training-job"},
+        _session(cap=5.0, spent=0.0),
+    )
+
+    assert decision.requires_approval is True
+    assert decision.auto_approval_blocked is True
+    assert "cancellation" in decision.block_reason
 
 
 @pytest.mark.asyncio

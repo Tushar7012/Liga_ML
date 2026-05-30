@@ -52,6 +52,7 @@ from session_manager import (
 
 import user_quotas
 
+from agent.core.aws_readiness import build_aws_sagemaker_readiness_snapshot
 from agent.core.gcp_readiness import build_gcp_vertex_readiness_snapshot
 from agent.core.hf_access import get_jobs_access
 from agent.core.hf_tokens import resolve_hf_request_token, resolve_hf_router_token
@@ -386,6 +387,7 @@ async def provider_health() -> dict[str, Any]:
             else ["HF_TOKEN or user OAuth token is required to run HF Jobs."],
         },
         "gcp_vertex": build_gcp_vertex_readiness_snapshot(),
+        "aws_sagemaker": build_aws_sagemaker_readiness_snapshot(),
     }
 
 

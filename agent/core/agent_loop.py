@@ -161,6 +161,8 @@ def _validate_tool_args(tool_args: dict) -> tuple[bool, str | None]:
 _IMMEDIATE_HF_JOB_RUNS = {"run", "uv"}
 _IMMEDIATE_GCP_VERTEX_JOB_RUNS = {"run"}
 _APPROVAL_REQUIRED_GCP_VERTEX_OPS = {"run", "cancel"}
+_IMMEDIATE_AWS_SAGEMAKER_JOB_RUNS = {"run"}
+_APPROVAL_REQUIRED_AWS_SAGEMAKER_OPS = {"run", "cancel"}
 
 
 @dataclass(frozen=True)
@@ -189,14 +191,27 @@ def _is_immediate_gcp_vertex_job_run(tool_name: str, tool_args: dict) -> bool:
     )
 
 
+def _is_immediate_aws_sagemaker_job_run(tool_name: str, tool_args: dict) -> bool:
+    return (
+        tool_name == "aws_sagemaker_jobs"
+        and _operation(tool_args) in _IMMEDIATE_AWS_SAGEMAKER_JOB_RUNS
+    )
+
+
 def _is_gcp_vertex_cancel(tool_name: str, tool_args: dict) -> bool:
     return tool_name == "gcp_vertex_jobs" and _operation(tool_args) == "cancel"
 
 
+def _is_aws_sagemaker_cancel(tool_name: str, tool_args: dict) -> bool:
+    return tool_name == "aws_sagemaker_jobs" and _operation(tool_args) == "cancel"
+
+
 def _is_immediate_cloud_job_run(tool_name: str, tool_args: dict) -> bool:
-    return _is_immediate_hf_job_run(
-        tool_name, tool_args
-    ) or _is_immediate_gcp_vertex_job_run(tool_name, tool_args)
+    return (
+        _is_immediate_hf_job_run(tool_name, tool_args)
+        or _is_immediate_gcp_vertex_job_run(tool_name, tool_args)
+        or _is_immediate_aws_sagemaker_job_run(tool_name, tool_args)
+    )
 
 
 def _is_scheduled_hf_job_run(tool_name: str, tool_args: dict) -> bool:
@@ -250,6 +265,9 @@ def _base_needs_approval(
     if tool_name == "gcp_vertex_jobs":
         return _operation(tool_args) in _APPROVAL_REQUIRED_GCP_VERTEX_OPS
 
+    if tool_name == "aws_sagemaker_jobs":
+        return _operation(tool_args) in _APPROVAL_REQUIRED_AWS_SAGEMAKER_OPS
+
     # Check for file upload operations (hf_private_repos or other tools)
     if tool_name == "hf_private_repos":
         operation = tool_args.get("operation", "")
@@ -289,6 +307,8 @@ def _needs_approval(
     if _is_scheduled_hf_job_run(tool_name, tool_args):
         return True
     if _is_gcp_vertex_cancel(tool_name, tool_args):
+        return True
+    if _is_aws_sagemaker_cancel(tool_name, tool_args):
         return True
     if config and config.yolo_mode:
         return False
@@ -360,9 +380,21 @@ async def _approval_decision(
             block_reason="Vertex AI job cancellation always requires manual approval.",
         )
 
+    if _is_aws_sagemaker_cancel(tool_name, tool_args):
+        return ApprovalDecision(
+            requires_approval=True,
+            auto_approval_blocked=_effective_yolo_enabled(session, config),
+            block_reason=(
+                "SageMaker job cancellation always requires manual approval."
+            ),
+        )
+
     yolo_enabled = _effective_yolo_enabled(session, config)
     budgeted_target = _is_budgeted_auto_approval_target(tool_name, tool_args)
-    if yolo_enabled and _is_immediate_gcp_vertex_job_run(tool_name, tool_args):
+    if yolo_enabled and (
+        _is_immediate_gcp_vertex_job_run(tool_name, tool_args)
+        or _is_immediate_aws_sagemaker_job_run(tool_name, tool_args)
+    ):
         estimate = await estimate_tool_cost(tool_name, tool_args, session=session)
         remaining = _remaining_budget_after_reservations(session, reserved_spend_usd)
         reason = _budget_block_reason(estimate, remaining_cap_usd=remaining)
@@ -2283,16 +2315,16 @@ async def process_submission(session: Session, submission) -> bool:
                 provider_instruction = (
                     "The frontend training provider selector for this session is "
                     "set to AWS SageMaker AI. For training, fine-tuning, SFT, "
-                    "model adaptation, or cloud compute requests, keep the plan "
-                    "AWS/SageMaker-specific, use normalized uploaded dataset "
-                    "context from this session when one is available, and do not "
-                    "route to Hugging Face Jobs or Google Cloud Vertex AI compute "
-                    "unless the provider changes. AWS execution requires the "
-                    "future aws_sagemaker_jobs tool once available; if it is not "
-                    "available, explain that AWS provider selection is configured "
-                    "but SageMaker execution is not implemented yet. Before any "
-                    "future billable AWS job, produce a preflight and request "
-                    "approval."
+                    "model adaptation, or cloud compute requests, use "
+                    "aws_sagemaker_jobs and do not route to Hugging Face Jobs or "
+                    "Google Cloud Vertex AI compute unless the provider changes. "
+                    "Use normalized uploaded dataset configs from this session "
+                    "when present. Before launching any billable AWS training "
+                    "job, produce a preflight and request approval for "
+                    "aws_sagemaker_jobs operation run. In this build, AWS Phase "
+                    "2 validates request/readiness/cost but does not submit real "
+                    "SageMaker jobs until S3 staging and training templates are "
+                    "implemented."
                 )
             else:
                 provider_instruction = (
