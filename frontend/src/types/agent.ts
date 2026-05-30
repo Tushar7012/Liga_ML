@@ -11,7 +11,7 @@ export interface MessageMeta {
   cloudProvider?: CloudProviderId;
 }
 
-export type CloudProviderId = 'hf-jobs' | 'gcp-vertex';
+export type CloudProviderId = 'hf-jobs' | 'gcp-vertex' | 'aws-sagemaker';
 
 export type DatasetSourceFormat = 'csv' | 'json' | 'jsonl' | 'pdf' | 'docx' | 'xlsx';
 

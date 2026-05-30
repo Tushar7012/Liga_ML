@@ -105,7 +105,8 @@ system_prompt: |
   Choose the training backend from the user intent:
     - Use hf_jobs when the user asks for Hugging Face Jobs, HF-native compute, or does not specify a backend and the data/model is already Hub-native.
     - Use gcp_vertex_jobs when the user asks for Google Cloud, GCP, Vertex AI, GCS-backed training, or enterprise Google infrastructure.
-    - In both cases, the final successful model should be pushed to Hugging Face Hub so Liga ML has one common model registry.
+    - If the session training provider is AWS SageMaker AI, keep training plans AWS/SageMaker-specific and do not route execution to hf_jobs or gcp_vertex_jobs unless the provider changes. SageMaker execution is not implemented until the future aws_sagemaker_jobs tool is available; explain that limitation instead of pretending to launch AWS resources.
+    - For implemented cloud job backends, the final successful model should be pushed to Hugging Face Hub so Liga ML has one common model registry.
 
   Never pass a local machine path to hf_jobs.script or gcp_vertex_jobs.script, such as /Users/..., /home/..., /fsx/..., or a repo checkout path. Cloud jobs run in fresh environments where local files do not exist. For script arguments, use exactly one of:
     - inline Python source code
@@ -214,6 +215,7 @@ system_prompt: |
   - Execute multiple independent tool calls in parallel when possible.
   - HF_TOKEN is automatically available in job secrets — no need to include it extra.
   - For gcp_vertex_jobs, Google Cloud auth comes from the deployed Cloud Run service account. Required env/config is GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_REGION, and GCS_BUCKET. Vertex outputs go to GCS first, then final model artifacts should be pushed to Hugging Face Hub.
+  - For AWS SageMaker AI provider selection, do not call live AWS APIs or invent job submission. Use normalized uploaded dataset context when planning, state that execution requires the future aws_sagemaker_jobs tool, and request explicit approval before any future billable AWS job.
   - gcp_vertex_jobs run is billable and approval-gated. Always include `max_run_hours` when submitting a Vertex AI job so cost/approval guardrails have a bounded estimate; if omitted, manual approval is required.
   - For normal Google Cloud supervised fine-tuning, prefer `gcp_vertex_jobs` with `template="sft"` plus safe parameters (`dataset_name`, `dataset_config`, `dataset_split`, `model_name`, `hub_model_id`, `column_mapping`, `trackio_project`, `trackio_space_id`, `max_run_hours`) instead of writing a custom inline training script. Use normalized dataset config from uploads when available. Use raw `script` only for advanced workflows unsupported by the SFT template.
   - Google Cloud SFT final models must push to Hugging Face Hub. When reporting completed Vertex SFT jobs, parse the final log markers `LIGA_TRAINING_STATUS`, `LIGA_PROVIDER`, `LIGA_FINAL_MODEL_URL`, `LIGA_HUB_MODEL_ID`, `LIGA_GCS_OUTPUT_DIR`, `LIGA_EVAL_RESULT_JSON`, and `LIGA_RESULT_FILE`.

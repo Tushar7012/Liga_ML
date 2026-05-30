@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-CloudProviderId = Literal["hf-jobs", "gcp-vertex"]
+CloudProviderId = Literal["hf-jobs", "gcp-vertex", "aws-sagemaker"]
 
 
 class OpType(str, Enum):

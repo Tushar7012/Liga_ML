@@ -2266,7 +2266,7 @@ async def process_submission(session: Session, submission) -> bool:
     if op.op_type == OpType.USER_INPUT:
         text = op.data.get("text", "") if op.data else ""
         cloud_provider = op.data.get("cloud_provider") if op.data else None
-        if cloud_provider in {"hf-jobs", "gcp-vertex"}:
+        if cloud_provider in {"hf-jobs", "gcp-vertex", "aws-sagemaker"}:
             if cloud_provider == "gcp-vertex":
                 provider_instruction = (
                     "The frontend training provider selector for this session is "
@@ -2278,6 +2278,21 @@ async def process_submission(session: Session, submission) -> bool:
                     "gcp_vertex_jobs run and cancel operations are approval-gated "
                     "and billable; do not launch them without approval. For "
                     "non-training requests, use the normal best-fit tools."
+                )
+            elif cloud_provider == "aws-sagemaker":
+                provider_instruction = (
+                    "The frontend training provider selector for this session is "
+                    "set to AWS SageMaker AI. For training, fine-tuning, SFT, "
+                    "model adaptation, or cloud compute requests, keep the plan "
+                    "AWS/SageMaker-specific, use normalized uploaded dataset "
+                    "context from this session when one is available, and do not "
+                    "route to Hugging Face Jobs or Google Cloud Vertex AI compute "
+                    "unless the provider changes. AWS execution requires the "
+                    "future aws_sagemaker_jobs tool once available; if it is not "
+                    "available, explain that AWS provider selection is configured "
+                    "but SageMaker execution is not implemented yet. Before any "
+                    "future billable AWS job, produce a preflight and request "
+                    "approval."
                 )
             else:
                 provider_instruction = (

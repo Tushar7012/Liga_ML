@@ -129,7 +129,7 @@ def _available_models() -> list[dict[str, Any]]:
 
 
 AVAILABLE_MODELS = _available_models()
-VALID_CLOUD_PROVIDERS = {"hf-jobs", "gcp-vertex"}
+VALID_CLOUD_PROVIDERS = {"hf-jobs", "gcp-vertex", "aws-sagemaker"}
 
 
 def _is_premium_model(model_id: str) -> bool:
