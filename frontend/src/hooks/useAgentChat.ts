@@ -21,6 +21,7 @@ import { useSessionStore } from '@/store/sessionStore';
 import { useLayoutStore } from '@/store/layoutStore';
 import { logger } from '@/utils/logger';
 import { appendTrainingResultSummary, buildVertexStateMarkdown, createVertexRunPanel } from '@/lib/vertex-job-panel';
+import { appendAwsTrainingResultSummary, buildAwsStateMarkdown, createAwsSageMakerRunPanel } from '@/lib/aws-sagemaker-panel';
 import type { ToolStateChangeEventData } from '@/types/events';
 
 interface UseAgentChatOptions {
@@ -31,7 +32,7 @@ interface UseAgentChatOptions {
   onSessionDead?: (sessionId: string) => void;
 }
 
-const STREAMABLE_TOOLS = new Set(['hf_jobs', 'gcp_vertex_jobs', 'sandbox', 'bash']);
+const STREAMABLE_TOOLS = new Set(['hf_jobs', 'gcp_vertex_jobs', 'aws_sagemaker_jobs', 'sandbox', 'bash']);
 
 function appendPanelOutput(existing: string, next: string): string {
   if (!existing) return next;
@@ -163,6 +164,8 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
         const rawNewContent = appendPanelOutput(existingOutput, log);
         const newContent = tool === 'gcp_vertex_jobs'
           ? appendTrainingResultSummary(rawNewContent)
+          : tool === 'aws_sagemaker_jobs'
+            ? appendAwsTrainingResultSummary(rawNewContent)
           : rawNewContent;
 
         if (!sessState.panelData) {
@@ -170,14 +173,16 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
             ? 'Sandbox'
             : tool === 'gcp_vertex_jobs'
               ? 'Vertex AI Job Output'
+              : tool === 'aws_sagemaker_jobs'
+                ? 'AWS SageMaker Job Output'
               : 'Job Output';
-          const language = tool === 'gcp_vertex_jobs' ? 'markdown' : 'text';
+          const language = tool === 'gcp_vertex_jobs' || tool === 'aws_sagemaker_jobs' ? 'markdown' : 'text';
           updateSession(sessionId, {
             panelData: { title, output: { content: newContent, language } },
             panelView: 'output',
           });
         } else {
-          const language = tool === 'gcp_vertex_jobs'
+          const language = tool === 'gcp_vertex_jobs' || tool === 'aws_sagemaker_jobs'
             ? 'markdown'
             : sessState.panelData.output?.language || 'text';
           updateSession(sessionId, {
@@ -241,6 +246,15 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
               panelEditable: vertexPanel.editable,
             };
           }
+        } else if (firstTool.tool === 'aws_sagemaker_jobs') {
+          const awsPanel = createAwsSageMakerRunPanel(firstTool.arguments as Record<string, unknown>);
+          if (awsPanel) {
+            panelUpdate = {
+              panelData: awsPanel.data,
+              panelView: awsPanel.view,
+              panelEditable: awsPanel.editable,
+            };
+          }
         } else if (firstTool.tool === 'hf_repo_files' && args.content) {
           const filename = args.path || 'file';
           panelUpdate = {
@@ -292,6 +306,18 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
             useLayoutStore.getState().setRightPanelOpen(true);
             useLayoutStore.getState().setLeftSidebarOpen(false);
           }
+        } else if (toolName === 'aws_sagemaker_jobs') {
+          const awsPanel = createAwsSageMakerRunPanel(args);
+          if (!awsPanel) return;
+          updateSession(sessionId, {
+            panelData: awsPanel.data,
+            panelView: awsPanel.view,
+            panelEditable: awsPanel.editable,
+          });
+          if (isActiveRef.current) {
+            useLayoutStore.getState().setRightPanelOpen(true);
+            useLayoutStore.getState().setLeftSidebarOpen(false);
+          }
         } else if (toolName === 'hf_repo_files' && args.operation === 'upload' && args.content) {
           updateSession(sessionId, {
             panelData: {
@@ -335,6 +361,18 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
           if (isActiveRef.current && !useLayoutStore.getState().isRightPanelOpen) {
             useLayoutStore.getState().setRightPanelOpen(true);
           }
+        } else if (toolName === 'aws_sagemaker_jobs' && output) {
+          const content = appendAwsTrainingResultSummary(output);
+          updateSession(sessionId, {
+            panelData: sessState.panelData
+              ? { ...sessState.panelData, output: { content, language: 'markdown' } }
+              : { title: 'AWS SageMaker Job Output', output: { content, language: 'markdown' } },
+            panelView: !success ? 'output' : sessState.panelView,
+            panelEditable: false,
+          });
+          if (isActiveRef.current && !useLayoutStore.getState().isRightPanelOpen) {
+            useLayoutStore.getState().setRightPanelOpen(true);
+          }
         } else if (toolName === 'bash') {
           if (!success) {
             updateSession(sessionId, { panelView: 'output' });
@@ -342,7 +380,7 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
         }
       },
       onToolStateChange: (state: ToolStateChangeEventData) => {
-        if (state.tool !== 'gcp_vertex_jobs' || !state.tool_call_id) return;
+        if ((state.tool !== 'gcp_vertex_jobs' && state.tool !== 'aws_sagemaker_jobs') || !state.tool_call_id) return;
 
         const store = useAgentStore.getState();
         store.setJobRuntimeState(state.tool_call_id, {
@@ -351,30 +389,54 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
           jobName: state.jobName,
           jobUrl: state.jobUrl,
           outputDir: state.outputDir,
+          region: state.region,
+          s3TrainUri: state.s3TrainUri,
+          s3OutputUri: state.s3OutputUri,
+          s3ModelArtifact: state.s3ModelArtifact,
+          cloudWatchLogsUrl: state.cloudWatchLogsUrl,
+          outputPolicy: state.outputPolicy,
         });
         if (state.jobUrl) {
           store.setJobUrl(state.tool_call_id, state.jobUrl);
         }
 
         const sessState = store.getSessionState(sessionId);
-        const stateMarkdown = buildVertexStateMarkdown({
-          state: state.state,
-          jobName: state.jobName,
-          jobUrl: state.jobUrl,
-          outputDir: state.outputDir,
-        });
+        const stateMarkdown = state.tool === 'gcp_vertex_jobs'
+          ? buildVertexStateMarkdown({
+              state: state.state,
+              jobName: state.jobName,
+              jobUrl: state.jobUrl,
+              outputDir: state.outputDir,
+            })
+          : buildAwsStateMarkdown({
+              state: state.state,
+              jobName: state.jobName,
+              jobUrl: state.jobUrl,
+              region: state.region,
+              s3TrainUri: state.s3TrainUri,
+              s3OutputUri: state.s3OutputUri,
+              s3ModelArtifact: state.s3ModelArtifact,
+              cloudWatchLogsUrl: state.cloudWatchLogsUrl,
+              outputPolicy: state.outputPolicy,
+            });
         if (!stateMarkdown) return;
 
         const existingOutput = sessState.panelData?.output?.content || '';
-        const rawContent = existingOutput.includes('## Vertex AI Job State')
-          ? existingOutput.replace(/## Vertex AI Job State[\s\S]*$/m, stateMarkdown)
+        const heading = state.tool === 'gcp_vertex_jobs' ? '## Vertex AI Job State' : '## AWS SageMaker Job State';
+        const rawContent = existingOutput.includes(heading)
+          ? existingOutput.replace(new RegExp(`${heading}[\\s\\S]*$`, 'm'), stateMarkdown)
           : appendPanelOutput(existingOutput, stateMarkdown);
-        const content = appendTrainingResultSummary(rawContent);
+        const content = state.tool === 'gcp_vertex_jobs'
+          ? appendTrainingResultSummary(rawContent)
+          : appendAwsTrainingResultSummary(rawContent);
 
         updateSession(sessionId, {
           panelData: sessState.panelData
             ? { ...sessState.panelData, output: { content, language: 'markdown' } }
-            : { title: 'Vertex AI Job Output', output: { content, language: 'markdown' } },
+            : {
+                title: state.tool === 'gcp_vertex_jobs' ? 'Vertex AI Job Output' : 'AWS SageMaker Job Output',
+                output: { content, language: 'markdown' },
+              },
           panelView: sessState.panelData?.script ? sessState.panelView : 'output',
           panelEditable: false,
         });
@@ -659,6 +721,12 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
                 jobName: event.data?.jobName as string | undefined,
                 jobUrl: event.data?.jobUrl as string | undefined,
                 outputDir: event.data?.outputDir as string | undefined,
+                region: event.data?.region as string | undefined,
+                s3TrainUri: event.data?.s3TrainUri as string | undefined,
+                s3OutputUri: event.data?.s3OutputUri as string | undefined,
+                s3ModelArtifact: event.data?.s3ModelArtifact as string | undefined,
+                cloudWatchLogsUrl: event.data?.cloudWatchLogsUrl as string | undefined,
+                outputPolicy: event.data?.outputPolicy as string | undefined,
                 trackioSpaceId: event.data?.trackioSpaceId as string | undefined,
                 trackioProject: event.data?.trackioProject as string | undefined,
                 namespace: event.data?.namespace as string | undefined,

@@ -62,6 +62,12 @@ export interface JobRuntimeState {
   jobName?: string;
   jobUrl?: string;
   outputDir?: string;
+  region?: string;
+  s3TrainUri?: string;
+  s3OutputUri?: string;
+  s3ModelArtifact?: string;
+  cloudWatchLogsUrl?: string;
+  outputPolicy?: string;
 }
 
 export type ActivityStatus =

@@ -73,6 +73,7 @@ class FakeSageMakerClient:
     def __init__(self, *, fail=False):
         self.fail = fail
         self.calls = []
+        self.stopped_jobs = []
 
     def create_training_job(self, **kwargs):
         if self.fail:
@@ -81,6 +82,74 @@ class FakeSageMakerClient:
         return {
             "TrainingJobArn": "arn:aws:sagemaker:us-east-1:123456789012:training-job/custom-job-name"
         }
+
+    def list_training_jobs(self, **kwargs):
+        self.calls.append({"list_training_jobs": kwargs})
+        return {
+            "TrainingJobSummaries": [
+                {
+                    "TrainingJobName": "job-completed",
+                    "TrainingJobStatus": "Completed",
+                    "CreationTime": "2026-05-30T09:00:00+00:00",
+                },
+                {
+                    "TrainingJobName": "job-running",
+                    "TrainingJobStatus": "InProgress",
+                    "CreationTime": "2026-05-30T09:10:00+00:00",
+                },
+            ]
+        }
+
+    def describe_training_job(self, **kwargs):
+        self.calls.append({"describe_training_job": kwargs})
+        return {
+            "TrainingJobName": kwargs["TrainingJobName"],
+            "TrainingJobStatus": "Completed",
+            "SecondaryStatus": "Completed",
+            "TrainingStartTime": "2026-05-30T09:00:00+00:00",
+            "TrainingEndTime": "2026-05-30T09:30:00+00:00",
+            "ResourceConfig": {
+                "InstanceType": "ml.g5.xlarge",
+                "InstanceCount": 1,
+                "VolumeSizeInGB": 30,
+            },
+            "OutputDataConfig": {
+                "S3OutputPath": "s3://training-bucket/liga-ml/jobs/job-completed/output/"
+            },
+            "ModelArtifacts": {
+                "S3ModelArtifacts": "s3://training-bucket/liga-ml/jobs/job-completed/output/model.tar.gz"
+            },
+        }
+
+    def stop_training_job(self, **kwargs):
+        self.stopped_jobs.append(kwargs)
+        return {}
+
+
+class FakeLogsClient:
+    def __init__(self, *, streams=None, events=None):
+        self.streams = (
+            streams
+            if streams is not None
+            else [{"logStreamName": "job-running/algo-1-123"}]
+        )
+        self.events = (
+            events
+            if events is not None
+            else [
+                {"timestamp": 1, "message": "starting training"},
+                {"timestamp": 2, "message": "LIGA_TRAINING_STATUS=succeeded"},
+            ]
+        )
+        self.calls = []
+
+    def describe_log_streams(self, **kwargs):
+        self.calls.append({"describe_log_streams": kwargs})
+        return {"logStreams": self.streams}
+
+    def get_log_events(self, **kwargs):
+        self.calls.append({"get_log_events": kwargs})
+        return {"events": self.events}
 
 
 class FakeSession:
@@ -338,31 +407,147 @@ async def test_job_name_operations_require_job_name(operation, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_read_only_skeletons_do_not_call_live_aws(monkeypatch):
+async def test_ps_uses_mocked_list_training_jobs_and_formats_results(monkeypatch):
+    monkeypatch.setattr(
+        "agent.tools.aws_sagemaker_jobs_tool.build_aws_sagemaker_readiness_snapshot",
+        lambda: _ready_snapshot(),
+    )
+    sagemaker = FakeSageMakerClient()
+
+    result = await AwsSageMakerJobsTool(sagemaker_client=sagemaker).execute(
+        {"operation": "ps"}
+    )
+
+    assert not result.get("isError")
+    assert "job-completed" in result["formatted"]
+    assert "Completed" in result["formatted"]
+    assert "job-running" in result["formatted"]
+    assert "InProgress" in result["formatted"]
+    assert sagemaker.calls[0]["list_training_jobs"]["SortBy"] == "CreationTime"
+
+
+@pytest.mark.asyncio
+async def test_ps_missing_config_returns_safe_readiness_message(monkeypatch):
+    monkeypatch.setattr(
+        "agent.tools.aws_sagemaker_jobs_tool.build_aws_sagemaker_readiness_snapshot",
+        lambda: _ready_snapshot(
+            configured=False,
+            missing_env=["AWS_S3_BUCKET"],
+            credentials_detected=False,
+            errors=["Missing required AWS environment variables."],
+        ),
+    )
+
+    result = await AwsSageMakerJobsTool(sagemaker_client=FakeSageMakerClient()).execute(
+        {"operation": "ps"}
+    )
+
+    assert result["isError"] is True
+    assert "AWS_S3_BUCKET" in result["formatted"]
+    assert "AWS credentials" in result["formatted"]
+
+
+@pytest.mark.asyncio
+async def test_inspect_uses_mocked_describe_training_job_and_formats_status(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "agent.tools.aws_sagemaker_jobs_tool.build_aws_sagemaker_readiness_snapshot",
+        lambda: _ready_snapshot(),
+    )
+    session = FakeSession()
+    sagemaker = FakeSageMakerClient()
+
+    result = await AwsSageMakerJobsTool(
+        session=session,
+        tool_call_id="call-inspect",
+        sagemaker_client=sagemaker,
+    ).execute({"operation": "inspect", "job_name": "job-completed"})
+
+    assert not result.get("isError")
+    assert "TrainingJobName" in result["formatted"]
+    assert "job-completed" in result["formatted"]
+    assert "Completed" in result["formatted"]
+    assert "S3OutputPath" in result["formatted"]
+    assert "S3ModelArtifacts" in result["formatted"]
+    assert "SageMaker console" in result["formatted"]
+    assert "CloudWatch logs" in result["formatted"]
+    assert (
+        sagemaker.calls[0]["describe_training_job"]["TrainingJobName"]
+        == "job-completed"
+    )
+    event = session.events[-1]
+    assert event.data["state"] == "succeeded"
+    assert event.data["s3OutputUri"].endswith("/output/")
+    assert event.data["s3ModelArtifact"].endswith("/model.tar.gz")
+
+
+@pytest.mark.asyncio
+async def test_logs_uses_mocked_cloudwatch_client_and_formats_recent_logs(monkeypatch):
+    monkeypatch.setattr(
+        "agent.tools.aws_sagemaker_jobs_tool.build_aws_sagemaker_readiness_snapshot",
+        lambda: _ready_snapshot(),
+    )
+    logs = FakeLogsClient()
+
+    result = await AwsSageMakerJobsTool(logs_client=logs).execute(
+        {"operation": "logs", "job_name": "job-running"}
+    )
+
+    assert not result.get("isError")
+    assert "CloudWatch logs for `job-running`" in result["formatted"]
+    assert "starting training" in result["formatted"]
+    assert "LIGA_TRAINING_STATUS=succeeded" in result["formatted"]
+    assert (
+        logs.calls[0]["describe_log_streams"]["logGroupName"]
+        == "/aws/sagemaker/TrainingJobs"
+    )
+
+
+@pytest.mark.asyncio
+async def test_logs_handles_no_streams_or_events(monkeypatch):
     monkeypatch.setattr(
         "agent.tools.aws_sagemaker_jobs_tool.build_aws_sagemaker_readiness_snapshot",
         lambda: _ready_snapshot(),
     )
 
-    class ExplodingSageMakerClient:
-        def list_training_jobs(self, **_kwargs):
-            raise AssertionError("list_training_jobs must not be called in Phase 4")
+    no_streams = await AwsSageMakerJobsTool(
+        logs_client=FakeLogsClient(streams=[])
+    ).execute({"operation": "logs", "job_name": "job-running"})
+    no_events = await AwsSageMakerJobsTool(
+        logs_client=FakeLogsClient(events=[])
+    ).execute({"operation": "logs", "job_name": "job-running"})
 
-        def describe_training_job(self, **_kwargs):
-            raise AssertionError("describe_training_job must not be called in Phase 4")
+    assert "No CloudWatch log streams found yet" in no_streams["formatted"]
+    assert "No CloudWatch log events found yet" in no_events["formatted"]
 
-    tool = AwsSageMakerJobsTool(sagemaker_client=ExplodingSageMakerClient())
 
-    ps = await tool.execute({"operation": "ps"})
-    inspect = await tool.execute({"operation": "inspect", "job_name": "job-1"})
-    logs = await tool.execute({"operation": "logs", "job_name": "job-1"})
+@pytest.mark.asyncio
+async def test_cancel_calls_mocked_stop_training_job(monkeypatch):
+    monkeypatch.setattr(
+        "agent.tools.aws_sagemaker_jobs_tool.build_aws_sagemaker_readiness_snapshot",
+        lambda: _ready_snapshot(),
+    )
+    sagemaker = FakeSageMakerClient()
 
-    assert "read-only listing enabled later" in ps["formatted"]
-    assert "not implemented until later AWS phases" in inspect["formatted"]
-    assert "not implemented until later AWS phases" in logs["formatted"]
-    assert not ps.get("isError")
-    assert not inspect.get("isError")
-    assert not logs.get("isError")
+    result = await AwsSageMakerJobsTool(sagemaker_client=sagemaker).execute(
+        {"operation": "cancel", "job_name": "job-running"}
+    )
+
+    assert not result.get("isError")
+    assert sagemaker.stopped_jobs == [{"TrainingJobName": "job-running"}]
+    assert "Cancellation requested" in result["formatted"]
+    assert "SageMaker console" in result["formatted"]
+
+
+def test_sagemaker_status_mapping():
+    from agent.tools.aws_sagemaker_jobs_tool import map_sagemaker_status
+
+    assert map_sagemaker_status("Completed") == "succeeded"
+    assert map_sagemaker_status("Failed") == "failed"
+    assert map_sagemaker_status("Stopped") == "stopped"
+    assert map_sagemaker_status("Stopping") == "stopping"
+    assert map_sagemaker_status("InProgress") == "running"
 
 
 def test_registered_tool_is_available():
@@ -389,11 +574,11 @@ async def test_handler_submits_job_with_env_image(monkeypatch):
     )
     monkeypatch.setattr(
         "agent.tools.aws_sagemaker_jobs_tool._load_sagemaker_client",
-        lambda: FakeSageMakerClient(),
+        lambda _region=None: FakeSageMakerClient(),
     )
     monkeypatch.setattr(
         "agent.tools.aws_sagemaker_jobs_tool._load_s3_client",
-        lambda: FakeS3Client(),
+        lambda _region=None: FakeS3Client(),
     )
 
     output, ok = await aws_sagemaker_jobs_handler(_run_args())

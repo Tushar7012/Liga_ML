@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from datetime import datetime, timezone
@@ -30,6 +31,15 @@ AWS_REQUIRED_ENV_HELP = (
     "non-sensitive readiness snapshot."
 )
 DEFAULT_VOLUME_SIZE_GB = 30
+DEFAULT_LOG_GROUP = "/aws/sagemaker/TrainingJobs"
+MAX_LOG_EVENTS = 150
+SAGEMAKER_STATUS_MAP = {
+    "Completed": "succeeded",
+    "Failed": "failed",
+    "Stopped": "stopped",
+    "Stopping": "stopping",
+    "InProgress": "running",
+}
 
 
 def _slug(value: str) -> str:
@@ -69,16 +79,28 @@ def _request_value(args: dict[str, Any], key: str, readiness: dict[str, Any]) ->
     return readiness.get(readiness_key) if readiness_key else None
 
 
-def _load_sagemaker_client():
+def map_sagemaker_status(status: str | None) -> str:
+    if not status:
+        return "unknown"
+    return SAGEMAKER_STATUS_MAP.get(status, status.lower())
+
+
+def _load_sagemaker_client(region: str | None = None):
     import boto3
 
-    return boto3.client("sagemaker")
+    return boto3.client("sagemaker", region_name=region)
 
 
-def _load_s3_client():
+def _load_logs_client(region: str | None = None):
     import boto3
 
-    return boto3.client("s3")
+    return boto3.client("logs", region_name=region)
+
+
+def _load_s3_client(region: str | None = None):
+    import boto3
+
+    return boto3.client("s3", region_name=region)
 
 
 def _split_s3_uri(uri: str) -> tuple[str, str]:
@@ -106,12 +128,38 @@ def _console_url(region: str, job_name: str) -> str:
 
 
 def _cloudwatch_logs_url(region: str, job_name: str) -> str:
-    encoded_group = quote("/aws/sagemaker/TrainingJobs", safe="")
+    encoded_group = quote(DEFAULT_LOG_GROUP, safe="")
     encoded_prefix = quote(job_name, safe="")
     return (
         f"https://{region}.console.aws.amazon.com/cloudwatch/home?region={region}"
         f"#logsV2:log-groups/log-group/{encoded_group}/log-events/{encoded_prefix}"
     )
+
+
+def _format_time(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
+def _json_value(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, default=str)
+
+
+def _safe_log_message(message: Any) -> str:
+    text = str(message)
+    redactions = [
+        (r"(?i)(aws_secret_access_key\s*=\s*)\S+", r"\1[redacted]"),
+        (r"(?i)(aws_session_token\s*=\s*)\S+", r"\1[redacted]"),
+        (r"(?i)(hf_token\s*=\s*)\S+", r"\1[redacted]"),
+        (r"(?i)(huggingface_hub_token\s*=\s*)\S+", r"\1[redacted]"),
+        (r"AKIA[0-9A-Z]{16}", "[redacted-access-key]"),
+    ]
+    for pattern, replacement in redactions:
+        text = re.sub(pattern, replacement, text)
+    return text
 
 
 class AwsSageMakerJobsTool:
@@ -123,11 +171,13 @@ class AwsSageMakerJobsTool:
         session: Any = None,
         tool_call_id: str | None = None,
         sagemaker_client: Any | None = None,
+        logs_client: Any | None = None,
         s3_client: Any | None = None,
     ) -> None:
         self.session = session
         self.tool_call_id = tool_call_id
         self.sagemaker_client = sagemaker_client
+        self.logs_client = logs_client
         self.s3_client = s3_client
 
     async def execute(self, params: dict[str, Any]) -> ToolResult:
@@ -139,11 +189,11 @@ class AwsSageMakerJobsTool:
         if operation == "ps":
             return await self._list_jobs()
         if operation == "inspect":
-            return self._inspect_job(params)
+            return await self._inspect_job(params)
         if operation == "logs":
-            return self._logs(params)
+            return await self._logs(params)
         if operation == "cancel":
-            return self._cancel_job(params)
+            return await self._cancel_job(params)
         return self._error(
             f'Unknown operation: "{operation}". Available operations: run, ps, logs, inspect, cancel.'
         )
@@ -248,6 +298,7 @@ class AwsSageMakerJobsTool:
                 bucket=s3_bucket,
                 key=script_key,
                 script=script,
+                region=region,
             )
         except Exception as exc:
             return self._error(
@@ -316,7 +367,7 @@ class AwsSageMakerJobsTool:
             },
         }
 
-        sagemaker_client = self.sagemaker_client or _load_sagemaker_client()
+        sagemaker_client = self.sagemaker_client or _load_sagemaker_client(region)
         try:
             await asyncio.to_thread(sagemaker_client.create_training_job, **request)
         except Exception as exc:
@@ -329,6 +380,7 @@ class AwsSageMakerJobsTool:
             s3_output_uri=staged.s3_output_uri,
             s3_model_artifact=s3_model_artifact,
             cloudwatch_logs_url=cloudwatch_logs_url,
+            region=region,
         )
 
         metadata = {
@@ -365,8 +417,8 @@ class AwsSageMakerJobsTool:
                 f"**SageMaker console:** {console_url}\n"
                 f"**CloudWatch logs:** {cloudwatch_logs_url}\n\n"
                 "The job was submitted after approval through the existing "
-                "SageMaker run guardrails. Use later AWS phases for live status "
-                "polling, CloudWatch log inspection, and final artifact UI parsing."
+                "SageMaker run guardrails. Use `aws_sagemaker_jobs` inspect/logs "
+                "for live status, CloudWatch logs, and final artifact details."
             ),
             "totalResults": 1,
             "resultsShared": 1,
@@ -375,53 +427,227 @@ class AwsSageMakerJobsTool:
 
     async def _list_jobs(self) -> ToolResult:
         readiness = build_aws_sagemaker_readiness_snapshot()
+        if not readiness.get("configured"):
+            return self._missing_config_error(readiness)
+        region = str(readiness.get("region") or "us-east-1")
+        sagemaker_client = self.sagemaker_client or _load_sagemaker_client(region)
+        try:
+            response = await asyncio.to_thread(
+                sagemaker_client.list_training_jobs,
+                SortBy="CreationTime",
+                SortOrder="Descending",
+                MaxResults=20,
+            )
+        except Exception as exc:
+            return self._error(f"Could not list SageMaker training jobs: {exc}")
+
+        summaries = response.get("TrainingJobSummaries") or []
+        if not summaries:
+            return {
+                "formatted": (
+                    "No recent AWS SageMaker training jobs found.\n\n"
+                    f"**Region:** `{region}`"
+                ),
+                "totalResults": 0,
+                "resultsShared": 0,
+            }
+        rows = [
+            "| Job name | Status | Created |",
+            "| --- | --- | --- |",
+        ]
+        for summary in summaries:
+            name = summary.get("TrainingJobName") or ""
+            status = summary.get("TrainingJobStatus") or ""
+            created = _format_time(summary.get("CreationTime"))
+            rows.append(f"| `{name}` | `{status}` | `{created}` |")
         return {
             "formatted": (
-                "AWS SageMaker read-only listing enabled later; no live AWS call was made.\n\n"
-                f"**Configured:** `{bool(readiness.get('configured'))}`\n"
-                f"**Region:** `{readiness.get('region')}`"
+                "Recent AWS SageMaker training jobs.\n\n"
+                f"**Region:** `{region}`\n\n" + "\n".join(rows)
             ),
-            "totalResults": 0,
-            "resultsShared": 0,
+            "totalResults": len(summaries),
+            "resultsShared": len(summaries),
         }
 
-    def _inspect_job(self, args: dict[str, Any]) -> ToolResult:
+    async def _inspect_job(self, args: dict[str, Any]) -> ToolResult:
         job_name = str(args.get("job_name") or args.get("job_id") or "").strip()
         if not job_name:
             return self._error("job_name is required for inspect.")
-        return {
-            "formatted": (
-                "AWS SageMaker inspect is not implemented until later AWS phases; "
-                f"no live AWS call was made for `{job_name}`."
+        readiness = build_aws_sagemaker_readiness_snapshot()
+        if not readiness.get("configured"):
+            return self._missing_config_error(readiness)
+        region = str(readiness.get("region") or "us-east-1")
+        sagemaker_client = self.sagemaker_client or _load_sagemaker_client(region)
+        try:
+            job = await asyncio.to_thread(
+                sagemaker_client.describe_training_job,
+                TrainingJobName=job_name,
+            )
+        except Exception as exc:
+            return self._error(
+                f"Could not inspect SageMaker training job `{job_name}`: {exc}"
+            )
+
+        status = str(job.get("TrainingJobStatus") or "")
+        output_uri = (job.get("OutputDataConfig") or {}).get("S3OutputPath")
+        model_artifact = (job.get("ModelArtifacts") or {}).get("S3ModelArtifacts")
+        console_url = _console_url(region, job_name)
+        logs_url = _cloudwatch_logs_url(region, job_name)
+        rows = [
+            ("TrainingJobName", job.get("TrainingJobName") or job_name),
+            ("TrainingJobStatus", status),
+            ("SecondaryStatus", job.get("SecondaryStatus")),
+            ("TrainingStartTime", _format_time(job.get("TrainingStartTime"))),
+            ("TrainingEndTime", _format_time(job.get("TrainingEndTime"))),
+            (
+                "ResourceConfig",
+                _json_value(job.get("ResourceConfig"))
+                if job.get("ResourceConfig")
+                else None,
             ),
-            "totalResults": 0,
-            "resultsShared": 0,
+            ("S3OutputPath", output_uri),
+            ("S3ModelArtifacts", model_artifact),
+            ("FailureReason", job.get("FailureReason")),
+            ("SageMaker console", console_url),
+            ("CloudWatch logs", logs_url),
+        ]
+        formatted_rows = [
+            f"**{label}:** {value}" for label, value in rows if value not in (None, "")
+        ]
+        await self._emit_job_state(
+            state=map_sagemaker_status(status),
+            job_name=job_name,
+            job_url=console_url,
+            s3_output_uri=output_uri,
+            s3_model_artifact=model_artifact,
+            cloudwatch_logs_url=logs_url,
+            region=region,
+        )
+        return {
+            "formatted": "AWS SageMaker training job details.\n\n"
+            + "\n".join(formatted_rows),
+            "totalResults": 1,
+            "resultsShared": 1,
         }
 
-    def _logs(self, args: dict[str, Any]) -> ToolResult:
+    async def _logs(self, args: dict[str, Any]) -> ToolResult:
         job_name = str(args.get("job_name") or args.get("job_id") or "").strip()
         if not job_name:
             return self._error("job_name is required for logs.")
+        readiness = build_aws_sagemaker_readiness_snapshot()
+        if not readiness.get("configured"):
+            return self._missing_config_error(readiness)
+        region = str(readiness.get("region") or "us-east-1")
+        log_group = str(args.get("log_group") or DEFAULT_LOG_GROUP)
+        logs_client = self.logs_client or _load_logs_client(region)
+        limit = _positive_int(args.get("limit"), MAX_LOG_EVENTS) or MAX_LOG_EVENTS
+        limit = min(max(limit, 1), 200)
+        try:
+            streams_response = await asyncio.to_thread(
+                logs_client.describe_log_streams,
+                logGroupName=log_group,
+                logStreamNamePrefix=job_name,
+                orderBy="LastEventTime",
+                descending=True,
+                limit=5,
+            )
+        except Exception as exc:
+            return self._error(
+                f"Could not discover CloudWatch log streams for `{job_name}`: {exc}"
+            )
+
+        streams = streams_response.get("logStreams") or []
+        if not streams:
+            return {
+                "formatted": (
+                    f"No CloudWatch log streams found yet for `{job_name}`.\n\n"
+                    f"**Log group:** `{log_group}`\n"
+                    f"**CloudWatch logs:** {_cloudwatch_logs_url(region, job_name)}"
+                ),
+                "totalResults": 0,
+                "resultsShared": 0,
+            }
+
+        events: list[dict[str, Any]] = []
+        for stream in streams:
+            stream_name = stream.get("logStreamName")
+            if not stream_name:
+                continue
+            try:
+                response = await asyncio.to_thread(
+                    logs_client.get_log_events,
+                    logGroupName=log_group,
+                    logStreamName=stream_name,
+                    limit=limit,
+                    startFromHead=False,
+                )
+            except Exception as exc:
+                return self._error(
+                    f"Could not fetch CloudWatch log events for `{job_name}`: {exc}"
+                )
+            for event in response.get("events") or []:
+                events.append({**event, "logStreamName": stream_name})
+                if len(events) >= limit:
+                    break
+            if len(events) >= limit:
+                break
+
+        if not events:
+            return {
+                "formatted": (
+                    f"No CloudWatch log events found yet for `{job_name}`.\n\n"
+                    f"**Log group:** `{log_group}`\n"
+                    f"**CloudWatch logs:** {_cloudwatch_logs_url(region, job_name)}"
+                ),
+                "totalResults": 0,
+                "resultsShared": 0,
+            }
+
+        lines = [
+            f"CloudWatch logs for `{job_name}`.",
+            "",
+            f"**Log group:** `{log_group}`",
+            f"**CloudWatch logs:** {_cloudwatch_logs_url(region, job_name)}",
+            "",
+            "```text",
+        ]
+        for event in events[-limit:]:
+            timestamp = event.get("timestamp")
+            prefix = f"{timestamp} " if timestamp is not None else ""
+            lines.append(prefix + _safe_log_message(event.get("message", "")))
+        lines.append("```")
         return {
-            "formatted": (
-                "AWS SageMaker log streaming is not implemented until later AWS phases; "
-                f"no CloudWatch call was made for `{job_name}`."
-            ),
-            "totalResults": 0,
-            "resultsShared": 0,
+            "formatted": "\n".join(lines),
+            "totalResults": len(events),
+            "resultsShared": len(events),
         }
 
-    def _cancel_job(self, args: dict[str, Any]) -> ToolResult:
+    async def _cancel_job(self, args: dict[str, Any]) -> ToolResult:
         job_name = str(args.get("job_name") or args.get("job_id") or "").strip()
         if not job_name:
             return self._error("job_name is required for cancel.")
+        readiness = build_aws_sagemaker_readiness_snapshot()
+        if not readiness.get("configured"):
+            return self._missing_config_error(readiness)
+        region = str(readiness.get("region") or "us-east-1")
+        sagemaker_client = self.sagemaker_client or _load_sagemaker_client(region)
+        try:
+            await asyncio.to_thread(
+                sagemaker_client.stop_training_job,
+                TrainingJobName=job_name,
+            )
+        except Exception as exc:
+            return self._error(
+                f"Could not cancel SageMaker training job `{job_name}`: {exc}"
+            )
+        console_url = _console_url(region, job_name)
         return {
             "formatted": (
-                "AWS SageMaker cancellation is not implemented until later AWS phases; "
-                f"no `stop_training_job` call was made for `{job_name}`."
+                f"Cancellation requested for AWS SageMaker training job `{job_name}`.\n\n"
+                f"**SageMaker console:** {console_url}"
             ),
-            "totalResults": 0,
-            "resultsShared": 0,
+            "totalResults": 1,
+            "resultsShared": 1,
         }
 
     @staticmethod
@@ -470,9 +696,9 @@ class AwsSageMakerJobsTool:
         return os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
 
     async def _upload_training_script(
-        self, *, bucket: str, key: str, script: str
+        self, *, bucket: str, key: str, script: str, region: str | None = None
     ) -> None:
-        s3_client = self.s3_client or _load_s3_client()
+        s3_client = self.s3_client or _load_s3_client(region)
         await asyncio.to_thread(
             s3_client.put_object,
             Bucket=bucket,
@@ -490,6 +716,30 @@ class AwsSageMakerJobsTool:
         s3_output_uri: str,
         s3_model_artifact: str,
         cloudwatch_logs_url: str,
+        region: str,
+    ) -> None:
+        await self._emit_job_state(
+            state="running",
+            job_name=job_name,
+            job_url=job_url,
+            s3_train_uri=s3_train_uri,
+            s3_output_uri=s3_output_uri,
+            s3_model_artifact=s3_model_artifact,
+            cloudwatch_logs_url=cloudwatch_logs_url,
+            region=region,
+        )
+
+    async def _emit_job_state(
+        self,
+        *,
+        state: str,
+        job_name: str,
+        job_url: str,
+        s3_train_uri: str | None = None,
+        s3_output_uri: str | None = None,
+        s3_model_artifact: str | None = None,
+        cloudwatch_logs_url: str | None = None,
+        region: str | None = None,
     ) -> None:
         if self.session is None or not self.tool_call_id:
             return
@@ -503,13 +753,22 @@ class AwsSageMakerJobsTool:
                     data={
                         "tool_call_id": self.tool_call_id,
                         "tool": "aws_sagemaker_jobs",
-                        "state": "running",
+                        "state": state,
                         "jobName": job_name,
                         "jobUrl": job_url,
-                        "s3TrainUri": s3_train_uri,
-                        "s3OutputUri": s3_output_uri,
-                        "s3ModelArtifact": s3_model_artifact,
-                        "cloudWatchLogsUrl": cloudwatch_logs_url,
+                        **({"s3TrainUri": s3_train_uri} if s3_train_uri else {}),
+                        **({"s3OutputUri": s3_output_uri} if s3_output_uri else {}),
+                        **(
+                            {"s3ModelArtifact": s3_model_artifact}
+                            if s3_model_artifact
+                            else {}
+                        ),
+                        **(
+                            {"cloudWatchLogsUrl": cloudwatch_logs_url}
+                            if cloudwatch_logs_url
+                            else {}
+                        ),
+                        **({"region": region} if region else {}),
                     },
                 )
             )

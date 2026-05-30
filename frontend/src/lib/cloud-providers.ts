@@ -18,7 +18,7 @@ export const CLOUD_PROVIDER_OPTIONS: Array<{
   {
     id: 'aws-sagemaker',
     name: 'AWS SageMaker AI',
-    description: 'Plan training for AWS SageMaker AI; execution is not implemented yet',
+    description: 'Run training with the aws_sagemaker_jobs backend',
   },
 ];
 

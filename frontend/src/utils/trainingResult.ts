@@ -4,6 +4,11 @@ export interface TrainingResult {
   finalModelUrl?: string;
   hubModelId?: string;
   gcsOutputDir?: string;
+  awsTrainingJobName?: string;
+  awsRegion?: string;
+  s3ModelArtifact?: string;
+  s3OutputDir?: string;
+  cloudWatchLogsUrl?: string;
   evalResult?: Record<string, unknown> | null;
   resultFile?: string;
 }
@@ -14,6 +19,11 @@ const MARKERS = {
   finalModelUrl: 'LIGA_FINAL_MODEL_URL',
   hubModelId: 'LIGA_HUB_MODEL_ID',
   gcsOutputDir: 'LIGA_GCS_OUTPUT_DIR',
+  awsTrainingJobName: 'LIGA_AWS_TRAINING_JOB_NAME',
+  awsRegion: 'LIGA_AWS_REGION',
+  s3ModelArtifact: 'LIGA_S3_MODEL_ARTIFACT',
+  s3OutputDir: 'LIGA_S3_OUTPUT_DIR',
+  cloudWatchLogsUrl: 'LIGA_CLOUDWATCH_LOGS_URL',
   evalResult: 'LIGA_EVAL_RESULT_JSON',
   resultFile: 'LIGA_RESULT_FILE',
 } as const;
@@ -59,6 +69,11 @@ export function parseLigaTrainingResult(output: string | undefined): TrainingRes
   const finalModelUrl = cleanUrl(markerValue(output, MARKERS.finalModelUrl));
   const hubModelId = markerValue(output, MARKERS.hubModelId);
   const gcsOutputDir = markerValue(output, MARKERS.gcsOutputDir);
+  const awsTrainingJobName = markerValue(output, MARKERS.awsTrainingJobName);
+  const awsRegion = markerValue(output, MARKERS.awsRegion);
+  const s3ModelArtifact = markerValue(output, MARKERS.s3ModelArtifact);
+  const s3OutputDir = markerValue(output, MARKERS.s3OutputDir);
+  const cloudWatchLogsUrl = cleanUrl(markerValue(output, MARKERS.cloudWatchLogsUrl));
   const evalResult = parseEvalResult(markerValue(output, MARKERS.evalResult));
   const resultFile = markerValue(output, MARKERS.resultFile);
 
@@ -67,6 +82,11 @@ export function parseLigaTrainingResult(output: string | undefined): TrainingRes
   if (finalModelUrl) result.finalModelUrl = finalModelUrl;
   if (hubModelId) result.hubModelId = hubModelId;
   if (gcsOutputDir) result.gcsOutputDir = gcsOutputDir;
+  if (awsTrainingJobName) result.awsTrainingJobName = awsTrainingJobName;
+  if (awsRegion) result.awsRegion = awsRegion;
+  if (s3ModelArtifact) result.s3ModelArtifact = s3ModelArtifact;
+  if (s3OutputDir) result.s3OutputDir = s3OutputDir;
+  if (cloudWatchLogsUrl) result.cloudWatchLogsUrl = cloudWatchLogsUrl;
   if (evalResult !== undefined) result.evalResult = evalResult;
   if (resultFile) result.resultFile = resultFile;
 
