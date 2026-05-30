@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { SessionMeta } from '@/types/agent';
+import type { CloudProviderId, OutputPolicy, SessionMeta, TrainingGoal } from '@/types/agent';
+import { DEFAULT_OUTPUT_POLICY, DEFAULT_TRAINING_GOAL } from '@/lib/gcloud-preflight';
 import { deleteMessages, moveMessages } from '@/lib/chat-message-store';
 import { moveBackendMessages, deleteBackendMessages } from '@/lib/backend-message-store';
 
@@ -9,12 +10,17 @@ interface SessionStore {
   activeSessionId: string | null;
 
   // Actions
-  createSession: (id: string, model?: string | null) => void;
+  createSession: (id: string, model?: string | null, cloudProvider?: CloudProviderId | null) => void;
   deleteSession: (id: string) => void;
   switchSession: (id: string) => void;
   setSessionActive: (id: string, isActive: boolean) => void;
   updateSessionTitle: (id: string, title: string) => void;
   updateSessionModel: (id: string, model: string | null) => void;
+  updateSessionCloudProvider: (id: string, provider: CloudProviderId) => void;
+  updateSessionGcloudPreflight: (id: string, values: {
+    trainingGoal?: TrainingGoal;
+    outputPolicy?: OutputPolicy;
+  }) => void;
   setNeedsAttention: (id: string, needs: boolean) => void;
   /** Mark a session as expired (backend no longer has it). The UI shows a
    *  recovery banner and disables input. */
@@ -35,6 +41,9 @@ interface SessionStore {
       estimated_spend_usd?: number;
       remaining_usd?: number | null;
     } | null;
+    cloud_provider?: CloudProviderId | null;
+    training_goal?: TrainingGoal | null;
+    output_policy?: OutputPolicy | null;
   }>) => void;
   updateSessionYolo: (id: string, policy: {
     enabled: boolean;
@@ -54,7 +63,7 @@ export const useSessionStore = create<SessionStore>()(
       sessions: [],
       activeSessionId: null,
 
-      createSession: (id: string, model?: string | null) => {
+      createSession: (id: string, model?: string | null, cloudProvider?: CloudProviderId | null) => {
         const newSession: SessionMeta = {
           id,
           title: `Chat ${get().sessions.length + 1}`,
@@ -62,6 +71,9 @@ export const useSessionStore = create<SessionStore>()(
           isActive: true,
           needsAttention: false,
           model: model ?? null,
+          cloudProvider: cloudProvider ?? 'hf-jobs',
+          trainingGoal: DEFAULT_TRAINING_GOAL,
+          outputPolicy: DEFAULT_OUTPUT_POLICY,
           autoApprovalEnabled: false,
           autoApprovalCostCapUsd: null,
           autoApprovalEstimatedSpendUsd: 0,
@@ -118,6 +130,9 @@ export const useSessionStore = create<SessionStore>()(
                 title: server.title || existing.title,
                 isActive: server.is_active ?? existing.isActive,
                 model: server.model ?? existing.model ?? null,
+                cloudProvider: server.cloud_provider ?? existing.cloudProvider ?? 'hf-jobs',
+                trainingGoal: server.training_goal ?? existing.trainingGoal ?? DEFAULT_TRAINING_GOAL,
+                outputPolicy: server.output_policy ?? existing.outputPolicy ?? DEFAULT_OUTPUT_POLICY,
                 needsAttention: Boolean(server.pending_approval?.length) || existing.needsAttention,
                 expired: false,
                 ...(auto
@@ -141,6 +156,9 @@ export const useSessionStore = create<SessionStore>()(
               isActive: server.is_active ?? true,
               needsAttention: Boolean(server.pending_approval?.length),
               model: server.model ?? null,
+              cloudProvider: server.cloud_provider ?? 'hf-jobs',
+              trainingGoal: server.training_goal ?? DEFAULT_TRAINING_GOAL,
+              outputPolicy: server.output_policy ?? DEFAULT_OUTPUT_POLICY,
               expired: false,
               autoApprovalEnabled: Boolean(server.auto_approval?.enabled),
               autoApprovalCostCapUsd: server.auto_approval?.cost_cap_usd ?? null,
@@ -214,6 +232,28 @@ export const useSessionStore = create<SessionStore>()(
         set((state) => ({
           sessions: state.sessions.map((s) =>
             s.id === id ? { ...s, model } : s
+          ),
+        }));
+      },
+
+      updateSessionCloudProvider: (id: string, provider: CloudProviderId) => {
+        set((state) => ({
+          sessions: state.sessions.map((s) =>
+            s.id === id ? { ...s, cloudProvider: provider } : s
+          ),
+        }));
+      },
+
+      updateSessionGcloudPreflight: (id, values) => {
+        set((state) => ({
+          sessions: state.sessions.map((s) =>
+            s.id === id
+              ? {
+                  ...s,
+                  ...(values.trainingGoal ? { trainingGoal: values.trainingGoal } : {}),
+                  ...(values.outputPolicy ? { outputPolicy: values.outputPolicy } : {}),
+                }
+              : s
           ),
         }));
       },

@@ -55,6 +55,18 @@ export interface ToolLogEventData {
   log: string;
 }
 
+export interface ToolStateChangeEventData {
+  tool: string;
+  tool_call_id: string;
+  state: string;
+  jobName?: string;
+  jobUrl?: string;
+  outputDir?: string;
+  trackioSpaceId?: string;
+  trackioProject?: string;
+  namespace?: string;
+}
+
 export interface PlanUpdateEventData {
   plan: Array<{ id: string; content: string; status: 'pending' | 'in_progress' | 'completed' }>;
 }

@@ -9,7 +9,21 @@ import type { ChatTransport, UIMessage, UIMessageChunk, ChatRequestOptions } fro
 import { apiFetch } from '@/utils/api';
 import { logger } from '@/utils/logger';
 import type { AgentEvent } from '@/types/events';
+import type { ToolStateChangeEventData } from '@/types/events';
 import { useAgentStore } from '@/store/agentStore';
+import { useSessionStore } from '@/store/sessionStore';
+import { buildGcloudChatRequestMetadata } from '@/lib/gcloud-preflight';
+import { consumeExplicitApprovalDecision } from '@/lib/explicit-tool-approvals';
+
+function emptyFinishStream(): ReadableStream<UIMessageChunk> {
+  return new ReadableStream<UIMessageChunk>({
+    start(controller) {
+      controller.enqueue({ type: 'finish-step' });
+      controller.enqueue({ type: 'finish', finishReason: 'stop' });
+      controller.close();
+    },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Side-channel callback interface (non-chat events forwarded to the store)
@@ -37,6 +51,7 @@ export interface SideChannelCallbacks {
   }>) => void;
   onToolCallPanel: (tool: string, args: Record<string, unknown>) => void;
   onToolOutputPanel: (tool: string, toolCallId: string, output: string, success: boolean) => void;
+  onToolStateChange: (state: ToolStateChangeEventData) => void;
   onStreaming: () => void;
   onToolRunning: (toolName: string, description?: string) => void;
   onInterrupted: () => void;
@@ -277,6 +292,19 @@ function createEventToChunkStream(sideChannel: SideChannelCallbacks): TransformS
           if (jobUrl && tcId) {
             useAgentStore.getState().setJobUrl(tcId, jobUrl);
           }
+          if (tcId) {
+            sideChannel.onToolStateChange({
+              tool: toolName,
+              tool_call_id: tcId,
+              state,
+              jobName: (event.data?.jobName as string) || undefined,
+              jobUrl,
+              outputDir: (event.data?.outputDir as string) || undefined,
+              trackioSpaceId,
+              trackioProject,
+              namespace: (event.data?.namespace as string) || undefined,
+            });
+          }
           if (trackioSpaceId && tcId) {
             useAgentStore.getState().setTrackioDashboard(tcId, trackioSpaceId, trackioProject);
           }
@@ -374,16 +402,22 @@ export class SSEChatTransport implements ChatTransport<UIMessage> {
       // Approval continuation — extract approval decisions
       const approvals = approvedParts.map((p) => {
         if (p.type !== 'dynamic-tool') return null;
-        const approved = p.approval?.approved ?? true;
+        const explicitDecision = consumeExplicitApprovalDecision(sessionId, p.toolCallId);
+        if (!explicitDecision) return null;
+        const approved = explicitDecision.approved;
         const editedScript = useAgentStore.getState().getEditedScript(p.toolCallId);
         return {
           tool_call_id: p.toolCallId,
           approved,
-          feedback: approved ? null : (p.approval?.reason || 'Rejected by user'),
-          edited_script: editedScript ?? null,
-          namespace: null,
+          feedback: approved ? null : (explicitDecision.feedback || 'Rejected by user'),
+          edited_script: editedScript ?? explicitDecision.edited_script ?? null,
+          namespace: explicitDecision.namespace ?? null,
         };
       }).filter(Boolean);
+      if (approvals.length === 0) {
+        logger.warn('Ignoring approval continuation without explicit user approval');
+        return emptyFinishStream();
+      }
       body = { approvals };
     } else {
       // Normal user message
@@ -394,7 +428,20 @@ export class SSEChatTransport implements ChatTransport<UIMessage> {
             .map(p => p.text)
             .join('')
         : '';
-      body = { text };
+      const cloudProvider = useSessionStore
+        .getState()
+        .sessions.find((session) => session.id === sessionId)?.cloudProvider ?? 'hf-jobs';
+      const session = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId);
+      body = {
+        text,
+        ...buildGcloudChatRequestMetadata({
+          cloudProvider,
+          trainingGoal: session?.trainingGoal,
+          outputPolicy: session?.outputPolicy,
+        }),
+      };
     }
 
     // POST to SSE endpoint

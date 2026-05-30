@@ -5,6 +5,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+CloudProviderId = Literal["hf-jobs", "gcp-vertex"]
+TrainingGoal = Literal["smoke-test", "production", "agent-decide"]
+OutputPolicy = Literal["cloud-private", "hf-hub", "cloud-and-hf-hub"]
+
 
 class OpType(str, Enum):
     """Operation types matching agent/core/agent_loop.py."""
@@ -56,6 +60,9 @@ class SubmitRequest(BaseModel):
     # or runaway client could otherwise attach megabytes that then ride along
     # in every subsequent turn until /api/compact is called.
     text: str = Field(..., min_length=1, max_length=100_000)
+    cloud_provider: CloudProviderId | None = None
+    training_goal: TrainingGoal | None = None
+    output_policy: OutputPolicy | None = None
 
 
 class TruncateRequest(BaseModel):
@@ -70,6 +77,9 @@ class SessionResponse(BaseModel):
     session_id: str
     ready: bool = True
     model: str | None = None
+    cloud_provider: CloudProviderId = "hf-jobs"
+    training_goal: TrainingGoal = "agent-decide"
+    output_policy: OutputPolicy = "cloud-and-hf-hub"
 
 
 class PendingApprovalTool(BaseModel):
@@ -100,6 +110,9 @@ class SessionInfo(BaseModel):
     user_id: str = "dev"
     pending_approval: list[PendingApprovalTool] | None = None
     model: str | None = None
+    cloud_provider: CloudProviderId = "hf-jobs"
+    training_goal: TrainingGoal = "agent-decide"
+    output_policy: OutputPolicy = "cloud-and-hf-hub"
     title: str | None = None
     notification_destinations: list[str] = Field(default_factory=list)
     auto_approval: SessionAutoApprovalInfo = Field(
@@ -131,8 +144,14 @@ class DatasetUploadResponse(BaseModel):
     config_name: str
     filename: str
     path_in_repo: str
+    raw_path_in_repo: str
+    normalized_path_in_repo: str
+    normalized_format: Literal["jsonl"]
+    normalized_row_count: int
+    source_format: Literal["csv", "json", "jsonl", "pdf", "docx", "xlsx"]
+    supports_training: bool
     size_bytes: int
-    format: Literal["csv", "json", "jsonl"]
+    format: Literal["csv", "json", "jsonl", "pdf", "docx", "xlsx"]
     hub_url: str
     load_dataset_snippet: str
 

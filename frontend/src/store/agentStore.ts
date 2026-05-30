@@ -56,6 +56,14 @@ export interface ToolBudgetBlockState {
   remainingCapUsd?: number | null;
 }
 
+export interface JobRuntimeState {
+  tool?: string;
+  state?: string;
+  jobName?: string;
+  jobUrl?: string;
+  outputDir?: string;
+}
+
 export type ActivityStatus =
   | { type: 'idle' }
   | { type: 'thinking' }
@@ -139,6 +147,9 @@ interface AgentStore {
   // Job statuses (tool_call_id -> job status) for HF jobs
   jobStatuses: Record<string, string>;
 
+  // Runtime job metadata emitted by long-running backends such as Vertex AI.
+  jobRuntimeStates: Record<string, JobRuntimeState>;
+
   // Trackio dashboard config per tool call (tool_call_id -> {spaceId, project?})
   // Set by hf_jobs / sandbox_create tools when the agent declares trackio_space_id;
   // the UI uses it to embed the live dashboard via an iframe.
@@ -194,6 +205,9 @@ interface AgentStore {
 
   setJobStatus: (toolCallId: string, status: string) => void;
   getJobStatus: (toolCallId: string) => string | undefined;
+
+  setJobRuntimeState: (toolCallId: string, patch: JobRuntimeState) => void;
+  getJobRuntimeState: (toolCallId: string) => JobRuntimeState | undefined;
 
   setTrackioDashboard: (toolCallId: string, spaceId: string, project?: string) => void;
   getTrackioDashboard: (toolCallId: string) => { spaceId: string; project?: string } | undefined;
@@ -306,6 +320,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
   editedScripts: {},
   jobUrls: {},
   jobStatuses: {},
+  jobRuntimeStates: {},
   trackioDashboards: loadTrackioDashboards(),
   toolErrors: loadToolErrors(),
   rejectedTools: loadRejectedTools(),
@@ -493,6 +508,20 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
   },
 
   getJobStatus: (toolCallId) => get().jobStatuses[toolCallId],
+
+  setJobRuntimeState: (toolCallId, patch) => {
+    set((state) => ({
+      jobRuntimeStates: {
+        ...state.jobRuntimeStates,
+        [toolCallId]: {
+          ...state.jobRuntimeStates[toolCallId],
+          ...patch,
+        },
+      },
+    }));
+  },
+
+  getJobRuntimeState: (toolCallId) => get().jobRuntimeStates[toolCallId],
 
   // ── Trackio Dashboards ──────────────────────────────────────────────
 

@@ -159,6 +159,8 @@ def _validate_tool_args(tool_args: dict) -> tuple[bool, str | None]:
 
 
 _IMMEDIATE_HF_JOB_RUNS = {"run", "uv"}
+_IMMEDIATE_GCP_VERTEX_JOB_RUNS = {"run"}
+_APPROVAL_REQUIRED_GCP_VERTEX_OPS = {"run", "cancel"}
 
 
 @dataclass(frozen=True)
@@ -180,12 +182,29 @@ def _is_immediate_hf_job_run(tool_name: str, tool_args: dict) -> bool:
     return tool_name == "hf_jobs" and _operation(tool_args) in _IMMEDIATE_HF_JOB_RUNS
 
 
+def _is_immediate_gcp_vertex_job_run(tool_name: str, tool_args: dict) -> bool:
+    return (
+        tool_name == "gcp_vertex_jobs"
+        and _operation(tool_args) in _IMMEDIATE_GCP_VERTEX_JOB_RUNS
+    )
+
+
+def _is_gcp_vertex_cancel(tool_name: str, tool_args: dict) -> bool:
+    return tool_name == "gcp_vertex_jobs" and _operation(tool_args) == "cancel"
+
+
+def _is_immediate_cloud_job_run(tool_name: str, tool_args: dict) -> bool:
+    return _is_immediate_hf_job_run(
+        tool_name, tool_args
+    ) or _is_immediate_gcp_vertex_job_run(tool_name, tool_args)
+
+
 def _is_scheduled_hf_job_run(tool_name: str, tool_args: dict) -> bool:
     return tool_name == "hf_jobs" and is_scheduled_operation(_operation(tool_args))
 
 
 def _is_budgeted_auto_approval_target(tool_name: str, tool_args: dict) -> bool:
-    return tool_name == "sandbox_create" or _is_immediate_hf_job_run(
+    return tool_name == "sandbox_create" or _is_immediate_cloud_job_run(
         tool_name, tool_args
     )
 
@@ -228,6 +247,9 @@ def _base_needs_approval(
 
         return True
 
+    if tool_name == "gcp_vertex_jobs":
+        return _operation(tool_args) in _APPROVAL_REQUIRED_GCP_VERTEX_OPS
+
     # Check for file upload operations (hf_private_repos or other tools)
     if tool_name == "hf_private_repos":
         operation = tool_args.get("operation", "")
@@ -265,6 +287,8 @@ def _needs_approval(
 ) -> bool:
     """Legacy sync approval predicate used by tests and CLI display helpers."""
     if _is_scheduled_hf_job_run(tool_name, tool_args):
+        return True
+    if _is_gcp_vertex_cancel(tool_name, tool_args):
         return True
     if config and config.yolo_mode:
         return False
@@ -329,12 +353,51 @@ async def _approval_decision(
             block_reason="Scheduled HF jobs always require manual approval.",
         )
 
+    if _is_gcp_vertex_cancel(tool_name, tool_args):
+        return ApprovalDecision(
+            requires_approval=True,
+            auto_approval_blocked=_effective_yolo_enabled(session, config),
+            block_reason="Vertex AI job cancellation always requires manual approval.",
+        )
+
     yolo_enabled = _effective_yolo_enabled(session, config)
+    session_yolo_enabled = _session_auto_approval_enabled(session)
     budgeted_target = _is_budgeted_auto_approval_target(tool_name, tool_args)
+    if _is_immediate_gcp_vertex_job_run(tool_name, tool_args):
+        estimate = await estimate_tool_cost(tool_name, tool_args, session=session)
+        remaining = _remaining_budget_after_reservations(session, reserved_spend_usd)
+        if not session_yolo_enabled:
+            return ApprovalDecision(
+                requires_approval=True,
+                auto_approval_blocked=yolo_enabled,
+                block_reason=(
+                    "Vertex AI run requires manual approval unless session "
+                    "auto-approval with a cost cap is enabled."
+                ),
+                estimated_cost_usd=estimate.estimated_cost_usd,
+                remaining_cap_usd=remaining,
+                billable=estimate.billable,
+            )
+        reason = _budget_block_reason(estimate, remaining_cap_usd=remaining)
+        if reason:
+            return ApprovalDecision(
+                requires_approval=True,
+                auto_approval_blocked=True,
+                block_reason=reason,
+                estimated_cost_usd=estimate.estimated_cost_usd,
+                remaining_cap_usd=remaining,
+                billable=estimate.billable,
+            )
+        return ApprovalDecision(
+            requires_approval=False,
+            auto_approved=base_requires_approval,
+            estimated_cost_usd=estimate.estimated_cost_usd,
+            remaining_cap_usd=remaining,
+            billable=estimate.billable,
+        )
 
     # Cost caps are a session-scoped web policy. Legacy config.yolo_mode
     # remains uncapped for CLI/headless, except for scheduled jobs above.
-    session_yolo_enabled = _session_auto_approval_enabled(session)
     if yolo_enabled and budgeted_target and session_yolo_enabled:
         estimate = await estimate_tool_cost(tool_name, tool_args, session=session)
         remaining = _remaining_budget_after_reservations(session, reserved_spend_usd)
@@ -587,6 +650,147 @@ def _friendly_error_message(error: Exception) -> str | None:
         )
 
     return None
+
+
+def _llm_error_type(error: Exception) -> str:
+    """Classify provider failures for structured UI handling."""
+
+    err_str = str(error).lower()
+    quota_billing_patterns = (
+        "quota",
+        "billing",
+        "credit",
+        "insufficient",
+        "spending limit",
+        "monthly spending",
+        "exceeded your monthly",
+    )
+    if any(
+        pattern in err_str
+        for pattern in (
+            "401",
+            "403",
+            "authentication",
+            "unauthorized",
+            "forbidden",
+            "invalid x-api-key",
+            "invalid api key",
+            "api key",
+            "permission",
+        )
+    ):
+        if any(pattern in err_str for pattern in quota_billing_patterns):
+            return "quota_or_billing"
+        return "auth"
+    if any(pattern in err_str for pattern in quota_billing_patterns):
+        return "quota_or_billing"
+    if _is_rate_limit_error(error):
+        return "rate_limit"
+    if any(
+        pattern in err_str
+        for pattern in (
+            "timeout",
+            "timed out",
+            "network",
+            "connection",
+            "eof",
+            "broken pipe",
+            "service unavailable",
+            "bad gateway",
+        )
+    ):
+        return "network"
+    return "unknown"
+
+
+def _llm_failure_message(
+    error: Exception,
+    *,
+    model_name: str,
+    include_traceback: bool = False,
+) -> tuple[str, str]:
+    """Return (error_type, visible message) for failed LLM calls."""
+
+    error_type = _llm_error_type(error)
+    raw = str(error).strip()
+    if error_type == "quota_or_billing":
+        message = (
+            "The selected model provider rejected the request because of quota, "
+            "billing, or credits. Switch to another model, or fix the provider "
+            "quota/billing state, then retry.\n\n"
+            f"Model: {model_name}\nProvider error: {raw}"
+        )
+    elif error_type == "auth":
+        message = (
+            "The selected model provider rejected the request because credentials "
+            "or permissions are missing or invalid. Switch to a configured model "
+            "or update the provider credentials, then retry.\n\n"
+            f"Model: {model_name}\nProvider error: {raw}"
+        )
+    elif error_type == "rate_limit":
+        message = (
+            "The selected model provider rate-limited this request. Wait a bit, "
+            "switch to another model, or retry with a shorter request.\n\n"
+            f"Model: {model_name}\nProvider error: {raw}"
+        )
+    elif error_type == "network":
+        message = (
+            "The selected model provider could not be reached reliably. Retry, "
+            "or switch models if the provider stays unavailable.\n\n"
+            f"Model: {model_name}\nProvider error: {raw}"
+        )
+    else:
+        friendly = _friendly_error_message(error)
+        if friendly:
+            message = friendly
+        else:
+            message = (
+                "The selected model failed before returning a usable response. "
+                "No tool was launched. Switch models or retry after checking the "
+                "provider status.\n\n"
+                f"Model: {model_name}\nError: {raw}"
+            )
+            if include_traceback:
+                import traceback
+
+                message += "\n\n" + traceback.format_exc()
+    return error_type, message
+
+
+def _empty_llm_response_message(*, model_name: str, finish_reason: str | None) -> str:
+    reason = f" Finish reason: {finish_reason}." if finish_reason else ""
+    return (
+        "The selected model returned an empty response with no tool calls, so I "
+        "stopped instead of showing a blank assistant message. Switch to another "
+        "model or retry the request; if it repeats, the provider may be having "
+        f"issues.\n\nModel: {model_name}.{reason}"
+    )
+
+
+async def _emit_visible_error(
+    session: Session,
+    message: str,
+    *,
+    error_type: str,
+    model_name: str | None = None,
+) -> None:
+    """Emit an assistant-visible message and a structured error event."""
+
+    assistant_msg = Message(role="assistant", content=message)
+    session.context_manager.add_message(assistant_msg)
+    await session.send_event(
+        Event(event_type="assistant_message", data={"content": message})
+    )
+    await session.send_event(
+        Event(
+            event_type="error",
+            data={
+                "error": message,
+                "error_type": error_type,
+                "model": model_name or session.config.model_name,
+            },
+        )
+    )
 
 
 async def _compact_and_notify(session: Session) -> None:
@@ -1343,6 +1547,20 @@ class Handlers:
 
                 # If no tool calls, add assistant message and we're done
                 if not tool_calls:
+                    if not content:
+                        error_msg = _empty_llm_response_message(
+                            model_name=session.config.model_name,
+                            finish_reason=finish_reason,
+                        )
+                        await _emit_visible_error(
+                            session,
+                            error_msg,
+                            error_type="empty_response",
+                            model_name=session.config.model_name,
+                        )
+                        errored = True
+                        break
+
                     unfinished_plan = _unfinished_plan_items(session)
                     if (
                         unfinished_plan
@@ -1711,17 +1929,16 @@ class Handlers:
                 continue
 
             except Exception as e:
-                import traceback
-
-                error_msg = _friendly_error_message(e)
-                if error_msg is None:
-                    error_msg = str(e) + "\n" + traceback.format_exc()
-
-                await session.send_event(
-                    Event(
-                        event_type="error",
-                        data={"error": error_msg},
-                    )
+                error_type, error_msg = _llm_failure_message(
+                    e,
+                    model_name=session.config.model_name,
+                    include_traceback=True,
+                )
+                await _emit_visible_error(
+                    session,
+                    error_msg,
+                    error_type=error_type,
+                    model_name=session.config.model_name,
                 )
                 errored = True
                 break
@@ -2060,6 +2277,57 @@ async def process_submission(session: Session, submission) -> bool:
 
     if op.op_type == OpType.USER_INPUT:
         text = op.data.get("text", "") if op.data else ""
+        cloud_provider = op.data.get("cloud_provider") if op.data else None
+        training_goal = op.data.get("training_goal") if op.data else None
+        output_policy = op.data.get("output_policy") if op.data else None
+        if cloud_provider in {"hf-jobs", "gcp-vertex"}:
+            if cloud_provider == "gcp-vertex":
+                if training_goal in {"smoke-test", "production", "agent-decide"}:
+                    session.training_goal = training_goal
+                else:
+                    training_goal = getattr(session, "training_goal", "agent-decide")
+                if output_policy in {
+                    "cloud-private",
+                    "hf-hub",
+                    "cloud-and-hf-hub",
+                }:
+                    session.output_policy = output_policy
+                else:
+                    output_policy = getattr(
+                        session, "output_policy", "cloud-and-hf-hub"
+                    )
+                provider_instruction = (
+                    "User selected Google Cloud Vertex AI training backend. "
+                    "Use gcp_vertex_jobs for fine-tuning/training. Use uploaded "
+                    "dataset context and normalized dataset config if present. "
+                    "Before launch, respect "
+                    f"training_goal={training_goal} and output_policy={output_policy}. "
+                    "If output_policy=cloud-private, do not push final model to "
+                    "Hugging Face Hub. If output_policy=hf-hub, push final model "
+                    "to Hugging Face Hub. If output_policy=cloud-and-hf-hub, save "
+                    "to GCS and push to Hugging Face Hub. For sensitive domains "
+                    "(medical, finance, legal, insurance, government, or internal "
+                    "company data), recommend cloud-private unless user explicitly "
+                    "chooses otherwise. gcp_vertex_jobs run and cancel operations "
+                    "are approval-gated and billable; do not launch them without "
+                    "approval. For non-training requests, use the normal best-fit "
+                    "tools."
+                )
+            else:
+                provider_instruction = (
+                    "The frontend training provider selector for this session is "
+                    "set to Hugging Face Jobs. For training, fine-tuning, SFT, "
+                    "model adaptation, cloud compute, or model training job "
+                    "requests, prefer hf_jobs unless the user explicitly asks "
+                    "for another backend. Use uploaded dataset context from this "
+                    "session when one is available."
+                )
+            session.context_manager.add_message(
+                Message(
+                    role="user",
+                    content=f"[SYSTEM: {provider_instruction}]",
+                )
+            )
         await Handlers.run_agent(session, text)
         return True
 
