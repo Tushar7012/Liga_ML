@@ -133,6 +133,28 @@ async def test_gcp_vertex_job_under_cap_auto_runs_when_cost_is_known(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_gcp_vertex_global_yolo_still_requires_manual_approval(monkeypatch):
+    async def fake_estimate(*args, **kwargs):
+        return CostEstimate(estimated_cost_usd=1.5, billable=True)
+
+    monkeypatch.setattr(agent_loop, "estimate_tool_cost", fake_estimate)
+    session = _session(enabled=False, cap=None, spent=0.0)
+    session.config.yolo_mode = True
+
+    decision = await agent_loop._approval_decision(
+        "gcp_vertex_jobs",
+        {"operation": "run", "machine_type": "n1-standard-8", "max_run_hours": 1},
+        session,
+    )
+
+    assert decision.requires_approval is True
+    assert decision.auto_approval_blocked is True
+    assert decision.auto_approved is False
+    assert decision.estimated_cost_usd == 1.5
+    assert "manual approval" in decision.block_reason
+
+
+@pytest.mark.asyncio
 async def test_gcp_vertex_unknown_cost_blocks_auto_approval(monkeypatch):
     async def fake_estimate(*args, **kwargs):
         return CostEstimate(

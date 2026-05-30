@@ -361,10 +361,23 @@ async def _approval_decision(
         )
 
     yolo_enabled = _effective_yolo_enabled(session, config)
+    session_yolo_enabled = _session_auto_approval_enabled(session)
     budgeted_target = _is_budgeted_auto_approval_target(tool_name, tool_args)
-    if yolo_enabled and _is_immediate_gcp_vertex_job_run(tool_name, tool_args):
+    if _is_immediate_gcp_vertex_job_run(tool_name, tool_args):
         estimate = await estimate_tool_cost(tool_name, tool_args, session=session)
         remaining = _remaining_budget_after_reservations(session, reserved_spend_usd)
+        if not session_yolo_enabled:
+            return ApprovalDecision(
+                requires_approval=True,
+                auto_approval_blocked=yolo_enabled,
+                block_reason=(
+                    "Vertex AI run requires manual approval unless session "
+                    "auto-approval with a cost cap is enabled."
+                ),
+                estimated_cost_usd=estimate.estimated_cost_usd,
+                remaining_cap_usd=remaining,
+                billable=estimate.billable,
+            )
         reason = _budget_block_reason(estimate, remaining_cap_usd=remaining)
         if reason:
             return ApprovalDecision(
@@ -385,7 +398,6 @@ async def _approval_decision(
 
     # Cost caps are a session-scoped web policy. Legacy config.yolo_mode
     # remains uncapped for CLI/headless, except for scheduled jobs above.
-    session_yolo_enabled = _session_auto_approval_enabled(session)
     if yolo_enabled and budgeted_target and session_yolo_enabled:
         estimate = await estimate_tool_cost(tool_name, tool_args, session=session)
         remaining = _remaining_budget_after_reservations(session, reserved_spend_usd)
