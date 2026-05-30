@@ -180,6 +180,8 @@ class MongoSessionStore(NoopSessionStore):
         auto_approval_cost_cap_usd: float | None = None,
         auto_approval_estimated_spend_usd: float = 0.0,
         cloud_provider: str = "hf-jobs",
+        training_goal: str = "agent-decide",
+        output_policy: str = "cloud-and-hf-hub",
     ) -> None:
         if not self._ready():
             return
@@ -212,6 +214,8 @@ class MongoSessionStore(NoopSessionStore):
                     "auto_approval_cost_cap_usd": auto_approval_cost_cap_usd,
                     "auto_approval_estimated_spend_usd": auto_approval_estimated_spend_usd,
                     "cloud_provider": cloud_provider,
+                    "training_goal": training_goal,
+                    "output_policy": output_policy,
                 },
             },
             upsert=True,
@@ -236,6 +240,8 @@ class MongoSessionStore(NoopSessionStore):
         auto_approval_cost_cap_usd: float | None = None,
         auto_approval_estimated_spend_usd: float = 0.0,
         cloud_provider: str = "hf-jobs",
+        training_goal: str = "agent-decide",
+        output_policy: str = "cloud-and-hf-hub",
     ) -> None:
         if not self._ready():
             return
@@ -257,6 +263,8 @@ class MongoSessionStore(NoopSessionStore):
             auto_approval_cost_cap_usd=auto_approval_cost_cap_usd,
             auto_approval_estimated_spend_usd=auto_approval_estimated_spend_usd,
             cloud_provider=cloud_provider,
+            training_goal=training_goal,
+            output_policy=output_policy,
         )
         ops: list[Any] = []
         for idx, raw in enumerate(messages):

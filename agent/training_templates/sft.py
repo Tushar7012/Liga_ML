@@ -23,6 +23,8 @@ DEFAULT_PACKAGES = [
     "trackio",
     "sentencepiece",
 ]
+VALID_TRAINING_GOALS = {"smoke-test", "production", "agent-decide"}
+VALID_OUTPUT_POLICIES = {"cloud-private", "hf-hub", "cloud-and-hf-hub"}
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,8 @@ class SftTemplateConfig:
     dataset_name: str
     model_name: str
     hub_model_id: str
+    training_goal: str = "agent-decide"
+    output_policy: str = "cloud-and-hf-hub"
     dataset_config: str | None = None
     dataset_split: str = "train"
     eval_dataset_split: str | None = None
@@ -57,7 +61,16 @@ def build_sft_training_script(config: SftTemplateConfig) -> str:
         raise ValueError("dataset_name is required.")
     if not config.model_name.strip():
         raise ValueError("model_name is required.")
-    if not config.hub_model_id.strip():
+    if config.training_goal not in VALID_TRAINING_GOALS:
+        raise ValueError(
+            "training_goal must be one of: smoke-test, production, agent-decide"
+        )
+    if config.output_policy not in VALID_OUTPUT_POLICIES:
+        raise ValueError(
+            "output_policy must be one of: cloud-private, hf-hub, cloud-and-hf-hub"
+        )
+    push_to_hub = config.output_policy in {"hf-hub", "cloud-and-hf-hub"}
+    if push_to_hub and not config.hub_model_id.strip():
         raise ValueError("hub_model_id is required.")
 
     payload = {
@@ -68,6 +81,8 @@ def build_sft_training_script(config: SftTemplateConfig) -> str:
         "validation_split_ratio": config.validation_split_ratio,
         "model_name": config.model_name,
         "hub_model_id": config.hub_model_id,
+        "training_goal": config.training_goal,
+        "output_policy": config.output_policy,
         "column_mapping": config.column_mapping,
         "max_train_samples": config.max_train_samples,
         "max_eval_samples": config.max_eval_samples,
@@ -99,10 +114,13 @@ CONFIG = json.loads({config_json!r})
 DATASET_NAME = "{config.dataset_name}"
 MODEL_NAME = "{config.model_name}"
 HUB_MODEL_ID = "{config.hub_model_id}"
+TRAINING_GOAL = CONFIG["training_goal"]
+OUTPUT_POLICY = CONFIG["output_policy"]
+PUSH_TO_HUB = OUTPUT_POLICY in {{"hf-hub", "cloud-and-hf-hub"}}
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
-if not HF_TOKEN:
+if PUSH_TO_HUB and not HF_TOKEN:
     raise RuntimeError(
-        "HF_TOKEN or HUGGINGFACE_HUB_TOKEN is required to load private datasets and push the final model to Hugging Face Hub."
+        "HF_TOKEN or HUGGINGFACE_HUB_TOKEN is required to push the final model to Hugging Face Hub."
     )
 
 RAW_AIP_MODEL_DIR = os.environ.get("AIP_MODEL_DIR")
@@ -283,12 +301,19 @@ def prepare_datasets():
     return train_dataset, eval_dataset
 
 
+def hub_model_url():
+    if not PUSH_TO_HUB or not HUB_MODEL_ID:
+        return ""
+    return f"https://huggingface.co/{{HUB_MODEL_ID}}"
+
+
 def write_result(final_dir, status, gcs_output_dir, eval_metrics, train_rows, eval_rows):
     result = {{
         "status": status,
         "provider": "gcp-vertex",
-        "hub_model_id": HUB_MODEL_ID,
-        "model_url": f"https://huggingface.co/{{HUB_MODEL_ID}}",
+        "output_policy": OUTPUT_POLICY,
+        "hub_model_id": HUB_MODEL_ID if PUSH_TO_HUB else "",
+        "model_url": hub_model_url(),
         "gcs_output_dir": gcs_output_dir,
         "eval": eval_metrics,
         "train_rows": train_rows,
@@ -324,12 +349,13 @@ def main() -> None:
         disable_tqdm=True,
         report_to=["trackio"] if (trackio_project or trackio_space_id) else [],
         remove_unused_columns=False,
-        push_to_hub=True,
-        hub_model_id=HUB_MODEL_ID,
-        hub_strategy="every_save",
+        push_to_hub=PUSH_TO_HUB,
         packing=False,
         max_length={int(config.max_length)},
     )
+    if PUSH_TO_HUB:
+        training_kwargs["hub_model_id"] = HUB_MODEL_ID
+        training_kwargs["hub_strategy"] = "every_save"
     if CONFIG.get("run_name"):
         training_kwargs["run_name"] = CONFIG["run_name"]
     if trackio_project:
@@ -365,7 +391,8 @@ def main() -> None:
     else:
         print("No evaluation dataset was available; skipping evaluation.", flush=True)
 
-    trainer.push_to_hub()
+    if PUSH_TO_HUB:
+        trainer.push_to_hub()
 
     gcs_output_dir = first_gs_uri(RAW_AIP_MODEL_DIR, RAW_LIGA_OUTPUT_DIR)
     status = "succeeded"
@@ -378,13 +405,14 @@ def main() -> None:
         len(eval_dataset) if eval_dataset is not None else 0,
     )
 
-    api = HfApi()
-    api.upload_folder(
-        folder_path=str(final_dir),
-        repo_id=HUB_MODEL_ID,
-        repo_type="model",
-        token=HF_TOKEN,
-    )
+    if PUSH_TO_HUB:
+        api = HfApi()
+        api.upload_folder(
+            folder_path=str(final_dir),
+            repo_id=HUB_MODEL_ID,
+            repo_type="model",
+            token=HF_TOKEN,
+        )
     try:
         upload_folder_to_gcs(final_dir, gcs_output_dir)
     except Exception as exc:
@@ -398,14 +426,19 @@ def main() -> None:
             len(eval_dataset) if eval_dataset is not None else 0,
         )
         raise RuntimeError(
-            f"Model pushed to Hugging Face Hub, but GCS final artifact upload failed: {{exc}}"
+            f"Final model saved locally, but GCS final artifact upload failed: {{exc}}"
         ) from exc
 
     eval_json = json.dumps(eval_metrics, separators=(",", ":"), sort_keys=True)
     print("LIGA_TRAINING_STATUS=succeeded", flush=True)
     print("LIGA_PROVIDER=gcp-vertex", flush=True)
-    print(f"LIGA_FINAL_MODEL_URL=https://huggingface.co/{{HUB_MODEL_ID}}", flush=True)
-    print(f"LIGA_HUB_MODEL_ID={{HUB_MODEL_ID}}", flush=True)
+    print(f"LIGA_OUTPUT_POLICY={{OUTPUT_POLICY}}", flush=True)
+    if PUSH_TO_HUB:
+        print(f"LIGA_FINAL_MODEL_URL=https://huggingface.co/{{HUB_MODEL_ID}}", flush=True)
+        print(f"LIGA_HUB_MODEL_ID={{HUB_MODEL_ID}}", flush=True)
+    else:
+        print("LIGA_FINAL_MODEL_URL=", flush=True)
+        print("LIGA_HUB_MODEL_ID=", flush=True)
     print(f"LIGA_GCS_OUTPUT_DIR={{gcs_output_dir}}", flush=True)
     print(f"LIGA_EVAL_RESULT_JSON={{eval_json}}", flush=True)
     print(f"LIGA_RESULT_FILE={{RESULT_FILE_NAME}}", flush=True)

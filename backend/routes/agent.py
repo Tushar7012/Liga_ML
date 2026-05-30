@@ -130,6 +130,8 @@ def _available_models() -> list[dict[str, Any]]:
 
 AVAILABLE_MODELS = _available_models()
 VALID_CLOUD_PROVIDERS = {"hf-jobs", "gcp-vertex"}
+VALID_TRAINING_GOALS = {"smoke-test", "production", "agent-decide"}
+VALID_OUTPUT_POLICIES = {"cloud-private", "hf-hub", "cloud-and-hf-hub"}
 
 
 def _is_premium_model(model_id: str) -> bool:
@@ -140,6 +142,18 @@ def _cloud_provider_or_default(value: Any) -> str:
     if value in VALID_CLOUD_PROVIDERS:
         return str(value)
     return "hf-jobs"
+
+
+def _training_goal_or_default(value: Any) -> str:
+    if value in VALID_TRAINING_GOALS:
+        return str(value)
+    return "agent-decide"
+
+
+def _output_policy_or_default(value: Any) -> str:
+    if value in VALID_OUTPUT_POLICIES:
+        return str(value)
+    return "cloud-and-hf-hub"
 
 
 async def _model_override_for_new_session(
@@ -488,6 +502,8 @@ async def create_session(
     # Optional model override. Empty body falls back to the config default.
     model: str | None = None
     cloud_provider = "hf-jobs"
+    training_goal = "agent-decide"
+    output_policy = "cloud-and-hf-hub"
     try:
         body = await request.json()
     except Exception:
@@ -495,6 +511,8 @@ async def create_session(
     if isinstance(body, dict):
         model = body.get("model")
         cloud_provider = _cloud_provider_or_default(body.get("cloud_provider"))
+        training_goal = _training_goal_or_default(body.get("training_goal"))
+        output_policy = _output_policy_or_default(body.get("output_policy"))
 
     valid_ids = {m["id"] for m in AVAILABLE_MODELS}
     if model and model not in valid_ids:
@@ -512,6 +530,8 @@ async def create_session(
             model=model,
             is_pro=user.get("plan") == "pro",
             cloud_provider=cloud_provider,
+            training_goal=training_goal,
+            output_policy=output_policy,
         )
     except SessionCapacityError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -521,6 +541,8 @@ async def create_session(
         ready=True,
         model=model or session_manager.config.model_name,
         cloud_provider=cloud_provider,
+        training_goal=training_goal,
+        output_policy=output_policy,
     )
 
 
@@ -544,6 +566,8 @@ async def restore_session_summary(
 
     model = body.get("model")
     cloud_provider = _cloud_provider_or_default(body.get("cloud_provider"))
+    training_goal = _training_goal_or_default(body.get("training_goal"))
+    output_policy = _output_policy_or_default(body.get("output_policy"))
     valid_ids = {m["id"] for m in AVAILABLE_MODELS}
     if model and model not in valid_ids:
         raise HTTPException(status_code=400, detail=f"Unknown model: {model}")
@@ -558,6 +582,8 @@ async def restore_session_summary(
             model=model,
             is_pro=user.get("plan") == "pro",
             cloud_provider=cloud_provider,
+            training_goal=training_goal,
+            output_policy=output_policy,
         )
     except SessionCapacityError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -579,6 +605,8 @@ async def restore_session_summary(
         ready=True,
         model=model or session_manager.config.model_name,
         cloud_provider=cloud_provider,
+        training_goal=training_goal,
+        output_policy=output_policy,
     )
 
 
@@ -634,8 +662,10 @@ async def set_session_cloud_provider(
     cloud_provider = body.get("cloud_provider")
     if cloud_provider not in VALID_CLOUD_PROVIDERS:
         raise HTTPException(status_code=400, detail="Unknown cloud provider")
+    training_goal = _training_goal_or_default(body.get("training_goal"))
+    output_policy = _output_policy_or_default(body.get("output_policy"))
     success = await session_manager.update_session_cloud_provider(
-        session_id, cloud_provider
+        session_id, cloud_provider, training_goal, output_policy
     )
     if not success:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -643,7 +673,12 @@ async def set_session_cloud_provider(
         f"Session {session_id} cloud provider → {cloud_provider} "
         f"(by {user.get('username', 'unknown')})"
     )
-    return {"session_id": session_id, "cloud_provider": cloud_provider}
+    return {
+        "session_id": session_id,
+        "cloud_provider": cloud_provider,
+        "training_goal": training_goal,
+        "output_policy": output_policy,
+    }
 
 
 @router.post("/session/{session_id}/notifications")
@@ -867,7 +902,11 @@ async def submit_input(
         raise RequestValidationError(exc.errors()) from exc
     await _enforce_premium_model_quota(user, agent_session)
     success = await session_manager.submit_user_input(
-        body.session_id, body.text, body.cloud_provider
+        body.session_id,
+        body.text,
+        body.cloud_provider,
+        body.training_goal,
+        body.output_policy,
     )
     if not success:
         raise HTTPException(status_code=404, detail="Session not found or inactive")
@@ -919,6 +958,8 @@ async def chat_sse(
     text = body.get("text")
     approvals = body.get("approvals")
     cloud_provider = _cloud_provider_or_default(body.get("cloud_provider"))
+    training_goal = _training_goal_or_default(body.get("training_goal"))
+    output_policy = _output_policy_or_default(body.get("output_policy"))
 
     # Gate user-message sends against the daily premium-model quota. Approvals are
     # continuations of an in-progress turn — the session was already charged
@@ -945,7 +986,7 @@ async def chat_sse(
             success = await session_manager.submit_approval(session_id, formatted)
         elif text is not None:
             success = await session_manager.submit_user_input(
-                session_id, text, cloud_provider
+                session_id, text, cloud_provider, training_goal, output_policy
             )
         else:
             broadcaster.unsubscribe(sub_id)

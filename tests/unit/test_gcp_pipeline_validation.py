@@ -13,6 +13,58 @@ def test_validate_sft_template_request_requires_core_fields():
     assert "hub_model_id is required" in errors
 
 
+def test_validate_sft_template_request_allows_cloud_private_without_hub_target():
+    errors = validate_sft_template_request(
+        {
+            "dataset_name": "trl-lib/Capybara",
+            "model_name": "Qwen/Qwen2.5-0.5B-Instruct",
+            "output_policy": "cloud-private",
+        }
+    )
+
+    assert "hub_model_id is required" not in errors
+
+
+def test_validate_sft_template_request_requires_hub_target_for_hub_outputs():
+    hf_only = validate_sft_template_request(
+        {
+            "dataset_name": "trl-lib/Capybara",
+            "model_name": "Qwen/Qwen2.5-0.5B-Instruct",
+            "output_policy": "hf-hub",
+        }
+    )
+    both = validate_sft_template_request(
+        {
+            "dataset_name": "trl-lib/Capybara",
+            "model_name": "Qwen/Qwen2.5-0.5B-Instruct",
+            "output_policy": "cloud-and-hf-hub",
+        }
+    )
+
+    assert "hub_model_id is required" in hf_only
+    assert "hub_model_id is required" in both
+
+
+def test_validate_sft_template_request_rejects_invalid_goal_and_output_policy():
+    errors = validate_sft_template_request(
+        {
+            "dataset_name": "trl-lib/Capybara",
+            "model_name": "Qwen/Qwen2.5-0.5B-Instruct",
+            "hub_model_id": "ligaments-dev/test-model",
+            "training_goal": "long-benchmark",
+            "output_policy": "dropbox",
+        }
+    )
+
+    assert (
+        "training_goal must be one of: smoke-test, production, agent-decide" in errors
+    )
+    assert (
+        "output_policy must be one of: cloud-private, hf-hub, cloud-and-hf-hub"
+        in errors
+    )
+
+
 def test_validate_sft_template_request_rejects_risky_defaults():
     errors = validate_sft_template_request(
         {

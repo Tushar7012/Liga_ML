@@ -44,6 +44,8 @@ TERMINAL_JOB_STATES = {
     "JOB_STATE_CANCELLED",
     "JOB_STATE_EXPIRED",
 }
+VALID_TRAINING_GOALS = {"smoke-test", "production", "agent-decide"}
+VALID_OUTPUT_POLICIES = {"cloud-private", "hf-hub", "cloud-and-hf-hub"}
 
 
 def _slug(value: str) -> str:
@@ -191,6 +193,16 @@ class GcpVertexJobsTool:
         script = args.get("script")
         command = args.get("command")
         template = str(args.get("template") or "").strip().lower()
+        training_goal = str(args.get("training_goal") or "agent-decide").strip()
+        output_policy = str(args.get("output_policy") or "cloud-and-hf-hub").strip()
+        if training_goal not in VALID_TRAINING_GOALS:
+            return self._error(
+                "training_goal must be one of: smoke-test, production, agent-decide"
+            )
+        if output_policy not in VALID_OUTPUT_POLICIES:
+            return self._error(
+                "output_policy must be one of: cloud-private, hf-hub, cloud-and-hf-hub"
+            )
         hf_model_target = ""
         if template:
             if script or command:
@@ -215,6 +227,8 @@ class GcpVertexJobsTool:
                     ),
                     model_name=str(args.get("model_name") or ""),
                     hub_model_id=str(args.get("hub_model_id") or ""),
+                    training_goal=training_goal,
+                    output_policy=output_policy,
                     task_type=str(args.get("task_type") or "sft"),
                     column_mapping=dict(args.get("column_mapping") or {}),
                     max_train_samples=args.get("max_train_samples"),
@@ -233,7 +247,8 @@ class GcpVertexJobsTool:
                     run_name=args.get("run_name"),
                 )
                 script = build_sft_training_script(template_config)
-                hf_model_target = template_config.hub_model_id
+                if output_policy in {"hf-hub", "cloud-and-hf-hub"}:
+                    hf_model_target = template_config.hub_model_id
             except Exception as e:
                 return self._error(str(e))
 
@@ -269,6 +284,8 @@ class GcpVertexJobsTool:
             env.setdefault("TRACKIO_SPACE_ID", str(args["trackio_space_id"]))
         env.setdefault("AIP_MODEL_DIR", output_dir)
         env.setdefault("LIGA_ML_OUTPUT_DIR", output_dir)
+        env.setdefault("LIGA_ML_TRAINING_GOAL", training_goal)
+        env.setdefault("LIGA_ML_OUTPUT_POLICY", output_policy)
         env.setdefault("GOOGLE_CLOUD_PROJECT", config["project"])
         env.setdefault("GOOGLE_CLOUD_REGION", config["region"])
         if self.session is not None and getattr(self.session, "hf_token", None):
@@ -342,13 +359,15 @@ class GcpVertexJobsTool:
                 f"**Region:** {config['region']}\n"
                 f"**Image:** {image}\n"
                 f"**Output dir:** {output_dir}\n"
+                f"**Training goal:** {training_goal}\n"
+                f"**Output policy:** {output_policy}\n"
                 f"{hf_target_line}"
                 f"**Console:** {console_url}\n\n"
                 "Use `gcp_vertex_jobs` with `operation='inspect'` or `operation='logs'` "
                 "to monitor it, but do not poll tightly. Active Vertex job monitoring is "
                 "rate-limited per session; wait for the cooldown message before checking "
-                "the same job again. Training scripts should push the final model to "
-                "Hugging Face Hub."
+                "the same job again. Training scripts should follow the selected "
+                "output policy for final model storage."
             ),
             "totalResults": 1,
             "resultsShared": 1,
@@ -568,15 +587,18 @@ GCP_VERTEX_JOBS_TOOL_SPEC = {
         "or GCS-backed training. Use hf_jobs when the user explicitly asks for Hugging Face Jobs.\n\n"
         "For normal supervised fine-tuning, prefer {'operation': 'run', 'template': 'sft', ...} "
         "instead of hand-writing an inline script. The SFT template uses the stable Liga ML "
-        "runtime, conservative defaults, GCS output, and Hugging Face Hub push. Use raw script "
-        "mode only for advanced workflows that the template does not support.\n\n"
+        "runtime, conservative defaults, GCS output, and output-policy-aware final storage. "
+        "Use raw script mode only for advanced workflows that the template does not support.\n\n"
         "Vertex AI run operations are billable and approval-gated. Include max_run_hours "
         "on run calls so approval and auto-approval budget checks can estimate a conservative "
         "upper bound. If max_run_hours is omitted, manual approval is required.\n\n"
         "Before submitting training jobs: inspect the dataset, choose template parameters, "
-        "and run a tiny smoke test in the sandbox when possible. Vertex AI writes checkpoints and "
-        "intermediate artifacts to GCS via AIP_MODEL_DIR/LIGA_ML_OUTPUT_DIR. The final model should "
-        "also be pushed to Hugging Face Hub so Liga ML has one common model-sharing layer.\n\n"
+        "and run a tiny smoke test in the sandbox when possible. Respect training_goal "
+        "(smoke-test, production, agent-decide) and output_policy (cloud-private, hf-hub, "
+        "cloud-and-hf-hub). Vertex AI writes checkpoints and intermediate artifacts to GCS via "
+        "AIP_MODEL_DIR/LIGA_ML_OUTPUT_DIR. For sensitive domains such as medical, finance, legal, "
+        "insurance, government, or internal company data, recommend cloud-private unless the user "
+        "explicitly chooses otherwise.\n\n"
         "Required deployment config: GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_REGION, GCS_BUCKET. "
         "Cloud Run should use an attached service account with Vertex AI, GCS, and logging permissions.\n\n"
         "Monitoring discipline: after a run is submitted, call inspect/logs once, then wait. "
@@ -593,7 +615,8 @@ GCP_VERTEX_JOBS_TOOL_SPEC = {
         "'dataset_name': 'FreedomIntelligence/medical-o1-reasoning-SFT', "
         "'dataset_config': 'en', 'model_name': 'Qwen/Qwen2.5-0.5B-Instruct', "
         "'hub_model_id': 'ligaments-dev/medical-qwen2.5-0.5b-sft', "
-        "'column_mapping': {'user': 'Question', 'assistant': ['Complex_CoT', 'Response']}}\n"
+        "'column_mapping': {'user': 'Question', 'assistant': ['Complex_CoT', 'Response']}, "
+        "'training_goal': 'smoke-test', 'output_policy': 'cloud-private'}\n"
         "{'operation': 'inspect', 'job_name': 'projects/.../locations/.../customJobs/123'}"
     ),
     "parameters": {
@@ -649,7 +672,28 @@ GCP_VERTEX_JOBS_TOOL_SPEC = {
             },
             "hub_model_id": {
                 "type": "string",
-                "description": "Final Hugging Face model repo id for template='sft'. Required.",
+                "description": (
+                    "Final Hugging Face model repo id for template='sft'. Required when "
+                    "output_policy is hf-hub or cloud-and-hf-hub; optional for cloud-private."
+                ),
+            },
+            "training_goal": {
+                "type": "string",
+                "enum": ["smoke-test", "production", "agent-decide"],
+                "description": (
+                    "Training intent selected by the user. smoke-test means choose small "
+                    "sample settings and short runtime when practical; production means "
+                    "production-ready fine-tuning; agent-decide lets the agent choose."
+                ),
+            },
+            "output_policy": {
+                "type": "string",
+                "enum": ["cloud-private", "hf-hub", "cloud-and-hf-hub"],
+                "description": (
+                    "Final model storage destination. cloud-private stores final artifacts in "
+                    "GCS only and must not push to Hugging Face Hub. hf-hub pushes to Hub. "
+                    "cloud-and-hf-hub saves to GCS and pushes to Hub. Default: cloud-and-hf-hub."
+                ),
             },
             "column_mapping": {
                 "type": "object",

@@ -2266,18 +2266,40 @@ async def process_submission(session: Session, submission) -> bool:
     if op.op_type == OpType.USER_INPUT:
         text = op.data.get("text", "") if op.data else ""
         cloud_provider = op.data.get("cloud_provider") if op.data else None
+        training_goal = op.data.get("training_goal") if op.data else None
+        output_policy = op.data.get("output_policy") if op.data else None
         if cloud_provider in {"hf-jobs", "gcp-vertex"}:
             if cloud_provider == "gcp-vertex":
+                if training_goal in {"smoke-test", "production", "agent-decide"}:
+                    session.training_goal = training_goal
+                else:
+                    training_goal = getattr(session, "training_goal", "agent-decide")
+                if output_policy in {
+                    "cloud-private",
+                    "hf-hub",
+                    "cloud-and-hf-hub",
+                }:
+                    session.output_policy = output_policy
+                else:
+                    output_policy = getattr(
+                        session, "output_policy", "cloud-and-hf-hub"
+                    )
                 provider_instruction = (
-                    "The frontend training provider selector for this session is "
-                    "set to Google Cloud Vertex AI. For training, fine-tuning, "
-                    "SFT, model adaptation, cloud compute, or model training job "
-                    "requests, prepare a concise preflight, use the normalized "
-                    "uploaded dataset config from this session when one is "
-                    "available, and call gcp_vertex_jobs rather than hf_jobs. "
-                    "gcp_vertex_jobs run and cancel operations are approval-gated "
-                    "and billable; do not launch them without approval. For "
-                    "non-training requests, use the normal best-fit tools."
+                    "User selected Google Cloud Vertex AI training backend. "
+                    "Use gcp_vertex_jobs for fine-tuning/training. Use uploaded "
+                    "dataset context and normalized dataset config if present. "
+                    "Before launch, respect "
+                    f"training_goal={training_goal} and output_policy={output_policy}. "
+                    "If output_policy=cloud-private, do not push final model to "
+                    "Hugging Face Hub. If output_policy=hf-hub, push final model "
+                    "to Hugging Face Hub. If output_policy=cloud-and-hf-hub, save "
+                    "to GCS and push to Hugging Face Hub. For sensitive domains "
+                    "(medical, finance, legal, insurance, government, or internal "
+                    "company data), recommend cloud-private unless user explicitly "
+                    "chooses otherwise. gcp_vertex_jobs run and cancel operations "
+                    "are approval-gated and billable; do not launch them without "
+                    "approval. For non-training requests, use the normal best-fit "
+                    "tools."
                 )
             else:
                 provider_instruction = (

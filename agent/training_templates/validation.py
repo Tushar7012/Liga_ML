@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+VALID_TRAINING_GOALS = {"smoke-test", "production", "agent-decide"}
+VALID_OUTPUT_POLICIES = {"cloud-private", "hf-hub", "cloud-and-hf-hub"}
+
 
 def _is_positive_number(value: Any) -> bool:
     if isinstance(value, bool):
@@ -29,7 +32,22 @@ def validate_sft_template_request(params: dict[str, Any]) -> list[str]:
     """Return human-readable validation errors for an SFT template request."""
 
     errors: list[str] = []
-    for field in ("dataset_name", "model_name", "hub_model_id"):
+    output_policy = str(params.get("output_policy") or "cloud-and-hf-hub").strip()
+    training_goal = str(params.get("training_goal") or "agent-decide").strip()
+
+    if training_goal not in VALID_TRAINING_GOALS:
+        errors.append(
+            "training_goal must be one of: smoke-test, production, agent-decide"
+        )
+    if output_policy not in VALID_OUTPUT_POLICIES:
+        errors.append(
+            "output_policy must be one of: cloud-private, hf-hub, cloud-and-hf-hub"
+        )
+
+    required_fields = ["dataset_name", "model_name"]
+    if output_policy in {"hf-hub", "cloud-and-hf-hub"}:
+        required_fields.append("hub_model_id")
+    for field in required_fields:
         if not str(params.get(field) or "").strip():
             errors.append(f"{field} is required")
 

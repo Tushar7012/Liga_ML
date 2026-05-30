@@ -103,6 +103,8 @@ class Session:
         self.user_id: Optional[str] = user_id
         self.hf_username: Optional[str] = hf_username
         self.cloud_provider: str = "hf-jobs"
+        self.training_goal: str = "agent-decide"
+        self.output_policy: str = "cloud-and-hf-hub"
         self.local_mode = local_mode
         self.persistence_store = persistence_store
         self.tool_router = tool_router

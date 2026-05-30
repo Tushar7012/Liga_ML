@@ -6,6 +6,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 CloudProviderId = Literal["hf-jobs", "gcp-vertex"]
+TrainingGoal = Literal["smoke-test", "production", "agent-decide"]
+OutputPolicy = Literal["cloud-private", "hf-hub", "cloud-and-hf-hub"]
 
 
 class OpType(str, Enum):
@@ -59,6 +61,8 @@ class SubmitRequest(BaseModel):
     # in every subsequent turn until /api/compact is called.
     text: str = Field(..., min_length=1, max_length=100_000)
     cloud_provider: CloudProviderId | None = None
+    training_goal: TrainingGoal | None = None
+    output_policy: OutputPolicy | None = None
 
 
 class TruncateRequest(BaseModel):
@@ -74,6 +78,8 @@ class SessionResponse(BaseModel):
     ready: bool = True
     model: str | None = None
     cloud_provider: CloudProviderId = "hf-jobs"
+    training_goal: TrainingGoal = "agent-decide"
+    output_policy: OutputPolicy = "cloud-and-hf-hub"
 
 
 class PendingApprovalTool(BaseModel):
@@ -105,6 +111,8 @@ class SessionInfo(BaseModel):
     pending_approval: list[PendingApprovalTool] | None = None
     model: str | None = None
     cloud_provider: CloudProviderId = "hf-jobs"
+    training_goal: TrainingGoal = "agent-decide"
+    output_policy: OutputPolicy = "cloud-and-hf-hub"
     title: str | None = None
     notification_destinations: list[str] = Field(default_factory=list)
     auto_approval: SessionAutoApprovalInfo = Field(

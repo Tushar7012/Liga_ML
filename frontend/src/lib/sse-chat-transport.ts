@@ -12,6 +12,7 @@ import type { AgentEvent } from '@/types/events';
 import type { ToolStateChangeEventData } from '@/types/events';
 import { useAgentStore } from '@/store/agentStore';
 import { useSessionStore } from '@/store/sessionStore';
+import { buildGcloudChatRequestMetadata } from '@/lib/gcloud-preflight';
 
 // ---------------------------------------------------------------------------
 // Side-channel callback interface (non-chat events forwarded to the store)
@@ -413,7 +414,17 @@ export class SSEChatTransport implements ChatTransport<UIMessage> {
       const cloudProvider = useSessionStore
         .getState()
         .sessions.find((session) => session.id === sessionId)?.cloudProvider ?? 'hf-jobs';
-      body = { text, cloud_provider: cloudProvider };
+      const session = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId);
+      body = {
+        text,
+        ...buildGcloudChatRequestMetadata({
+          cloudProvider,
+          trainingGoal: session?.trainingGoal,
+          outputPolicy: session?.outputPolicy,
+        }),
+      };
     }
 
     // POST to SSE endpoint

@@ -32,7 +32,7 @@ def test_sft_template_generates_safe_vertex_training_script():
     assert "gradient_checkpointing=True" in script
     assert "disable_tqdm=True" in script
     assert "logging_first_step=True" in script
-    assert "push_to_hub=True" in script
+    assert "push_to_hub=PUSH_TO_HUB" in script
     assert "trainer.push_to_hub" in script
     assert "api.upload_folder" in script
     assert "upload_folder_to_gcs(final_dir, gcs_output_dir)" in script
@@ -81,7 +81,7 @@ def test_sft_template_phase4_script_contract_static_checks():
 
     ast.parse(script)
     assert (
-        "HF_TOKEN or HUGGINGFACE_HUB_TOKEN is required to load private datasets and push the final model to Hugging Face Hub."
+        "HF_TOKEN or HUGGINGFACE_HUB_TOKEN is required to push the final model to Hugging Face Hub."
         in script
     )
     assert 'os.environ.get("LIGA_ML_SKIP_DEP_INSTALL") == "1"' in script
@@ -97,8 +97,8 @@ def test_sft_template_phase4_script_contract_static_checks():
     assert "max_length=768" in script
     assert "eval_strategy" in script
     assert "evaluation_strategy" not in script
-    assert "push_to_hub=True" in script
-    assert "hub_model_id=HUB_MODEL_ID" in script
+    assert "push_to_hub=PUSH_TO_HUB" in script
+    assert 'training_kwargs["hub_model_id"] = HUB_MODEL_ID' in script
     assert 'RESULT_FILE_NAME = "liga_training_result.json"' in script
     assert "LIGA_TRAINING_STATUS=succeeded" in script
     assert "LIGA_PROVIDER=gcp-vertex" in script
@@ -151,3 +151,41 @@ def test_sft_template_formats_normalized_and_common_dataset_rows():
     assert "fallback_text_from_example" in script
     assert "column_mapping" in script
     assert "Mapped {kind} column is missing" in script
+
+
+def test_sft_template_cloud_private_skips_hub_push_and_keeps_gcs_markers():
+    script = build_sft_training_script(
+        SftTemplateConfig(
+            dataset_name="example/private-dataset",
+            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            hub_model_id="",
+            output_policy="cloud-private",
+            training_goal="smoke-test",
+        )
+    )
+
+    ast.parse(script)
+    assert '"output_policy": "cloud-private"' in script
+    assert '"training_goal": "smoke-test"' in script
+    assert 'PUSH_TO_HUB = OUTPUT_POLICY in {"hf-hub", "cloud-and-hf-hub"}' in script
+    assert "push_to_hub=PUSH_TO_HUB" in script
+    assert "if PUSH_TO_HUB:" in script
+    assert 'print("LIGA_FINAL_MODEL_URL=", flush=True)' in script
+    assert 'print("LIGA_HUB_MODEL_ID=", flush=True)' in script
+    assert "LIGA_GCS_OUTPUT_DIR={gcs_output_dir}" in script
+    assert '"output_policy": OUTPUT_POLICY' in script
+
+
+def test_sft_template_result_json_includes_output_policy_for_default_behavior():
+    script = build_sft_training_script(
+        SftTemplateConfig(
+            dataset_name="example/dataset",
+            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            hub_model_id="example/output-model",
+        )
+    )
+
+    assert '"output_policy": "cloud-and-hf-hub"' in script
+    assert '"output_policy": OUTPUT_POLICY' in script
+    assert "LIGA_FINAL_MODEL_URL=https://huggingface.co/{HUB_MODEL_ID}" in script
+    assert "upload_folder_to_gcs(final_dir, gcs_output_dir)" in script

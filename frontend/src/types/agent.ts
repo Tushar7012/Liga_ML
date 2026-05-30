@@ -9,9 +9,13 @@
 export interface MessageMeta {
   createdAt?: string;
   cloudProvider?: CloudProviderId;
+  trainingGoal?: TrainingGoal;
+  outputPolicy?: OutputPolicy;
 }
 
 export type CloudProviderId = 'hf-jobs' | 'gcp-vertex';
+export type TrainingGoal = 'smoke-test' | 'production' | 'agent-decide';
+export type OutputPolicy = 'cloud-private' | 'hf-hub' | 'cloud-and-hf-hub';
 
 export type DatasetSourceFormat = 'csv' | 'json' | 'jsonl' | 'pdf' | 'docx' | 'xlsx';
 
@@ -44,6 +48,8 @@ export interface SessionMeta {
   needsAttention: boolean;
   model?: string | null;
   cloudProvider?: CloudProviderId;
+  trainingGoal?: TrainingGoal;
+  outputPolicy?: OutputPolicy;
   /** True when the backend no longer recognizes this session id (e.g.
    *  after a backend restart). The UI shows a recovery banner and
    *  disables input until the user chooses to restore-with-summary or

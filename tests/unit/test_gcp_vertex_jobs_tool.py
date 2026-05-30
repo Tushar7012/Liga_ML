@@ -243,6 +243,43 @@ async def test_run_sft_template_propagates_phase4_parameters(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_sft_template_accepts_training_goal_and_cloud_private_policy(
+    monkeypatch,
+):
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv("GOOGLE_CLOUD_REGION", "us-central1")
+    monkeypatch.setenv("GCS_BUCKET", "liga-training")
+    FakeCustomJob.instances = []
+
+    tool = GcpVertexJobsTool(custom_job_cls=FakeCustomJob)
+
+    result = await tool.execute(
+        {
+            "operation": "run",
+            "template": "sft",
+            "display_name": "sensitive-medical-smoke",
+            "dataset_name": "ligaments-dev/private-medical-upload",
+            "model_name": "Qwen/Qwen2.5-0.5B-Instruct",
+            "training_goal": "smoke-test",
+            "output_policy": "cloud-private",
+            "max_train_samples": 8,
+        }
+    )
+
+    assert not result.get("isError")
+    assert "HF model target" not in result["formatted"]
+    assert "**Output policy:** cloud-private" in result["formatted"]
+    worker_pool = FakeCustomJob.instances[0].kwargs["worker_pool_specs"][0]
+    encoded_runner = worker_pool["container_spec"]["command"][-1]
+    encoded_script = re.search(r"b64decode\('([^']+)'\)", encoded_runner).group(1)
+    decoded_script = base64.b64decode(encoded_script).decode("utf-8")
+    assert '"training_goal": "smoke-test"' in decoded_script
+    assert '"output_policy": "cloud-private"' in decoded_script
+    assert "push_to_hub=PUSH_TO_HUB" in decoded_script
+    assert 'print("LIGA_FINAL_MODEL_URL=", flush=True)' in decoded_script
+
+
+@pytest.mark.asyncio
 async def test_run_sft_template_requires_core_parameters(monkeypatch):
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
     monkeypatch.setenv("GOOGLE_CLOUD_REGION", "us-central1")

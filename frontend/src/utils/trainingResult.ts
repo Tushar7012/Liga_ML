@@ -1,6 +1,7 @@
 export interface TrainingResult {
   status?: string;
   provider?: 'gcp-vertex' | 'hf-jobs' | string;
+  outputPolicy?: string;
   finalModelUrl?: string;
   hubModelId?: string;
   gcsOutputDir?: string;
@@ -11,6 +12,7 @@ export interface TrainingResult {
 const MARKERS = {
   status: 'LIGA_TRAINING_STATUS',
   provider: 'LIGA_PROVIDER',
+  outputPolicy: 'LIGA_OUTPUT_POLICY',
   finalModelUrl: 'LIGA_FINAL_MODEL_URL',
   hubModelId: 'LIGA_HUB_MODEL_ID',
   gcsOutputDir: 'LIGA_GCS_OUTPUT_DIR',
@@ -56,6 +58,7 @@ export function parseLigaTrainingResult(output: string | undefined): TrainingRes
   const result: TrainingResult = {};
   const status = markerValue(output, MARKERS.status);
   const provider = markerValue(output, MARKERS.provider);
+  const outputPolicy = markerValue(output, MARKERS.outputPolicy);
   const finalModelUrl = cleanUrl(markerValue(output, MARKERS.finalModelUrl));
   const hubModelId = markerValue(output, MARKERS.hubModelId);
   const gcsOutputDir = markerValue(output, MARKERS.gcsOutputDir);
@@ -64,6 +67,7 @@ export function parseLigaTrainingResult(output: string | undefined): TrainingRes
 
   if (status) result.status = status;
   if (provider) result.provider = provider;
+  if (outputPolicy) result.outputPolicy = outputPolicy;
   if (finalModelUrl) result.finalModelUrl = finalModelUrl;
   if (hubModelId) result.hubModelId = hubModelId;
   if (gcsOutputDir) result.gcsOutputDir = gcsOutputDir;

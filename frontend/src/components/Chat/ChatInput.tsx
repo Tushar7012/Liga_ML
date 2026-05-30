@@ -27,13 +27,21 @@ import JobsUpgradeDialog from '@/components/JobsUpgradeDialog';
 import { useAgentStore } from '@/store/agentStore';
 import { useSessionStore } from '@/store/sessionStore';
 import {
+  DEFAULT_OUTPUT_POLICY,
+  DEFAULT_TRAINING_GOAL,
+  OUTPUT_POLICY_OPTIONS,
+  TRAINING_GOAL_OPTIONS,
+  outputPolicyLabel,
+  trainingGoalLabel,
+} from '@/lib/gcloud-preflight';
+import {
   CLAUDE_MODEL_PATH,
   FIRST_FREE_MODEL_PATH,
   GPT_55_MODEL_PATH,
   isClaudePath,
   isPremiumPath,
 } from '@/utils/model';
-import type { CloudProviderId, DatasetUploadResponse } from '@/types/agent';
+import type { CloudProviderId, DatasetUploadResponse, OutputPolicy, TrainingGoal } from '@/types/agent';
 
 // Model configuration
 interface ModelOption {
@@ -176,6 +184,8 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
   );
   const [modelAnchorEl, setModelAnchorEl] = useState<null | HTMLElement>(null);
   const [providerAnchorEl, setProviderAnchorEl] = useState<null | HTMLElement>(null);
+  const [trainingGoalAnchorEl, setTrainingGoalAnchorEl] = useState<null | HTMLElement>(null);
+  const [outputPolicyAnchorEl, setOutputPolicyAnchorEl] = useState<null | HTMLElement>(null);
   const { quota, refresh: refreshQuota } = useUserQuota();
   // The daily-cap dialog is triggered from two places: (a) a 429 returned
   // from the chat transport when the user tries to send on a premium model over cap —
@@ -188,10 +198,21 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
   const setJobsUpgradeRequired = useAgentStore((s) => s.setJobsUpgradeRequired);
   const updateSessionModel = useSessionStore((s) => s.updateSessionModel);
   const updateSessionCloudProvider = useSessionStore((s) => s.updateSessionCloudProvider);
+  const updateSessionGcloudPreflight = useSessionStore((s) => s.updateSessionGcloudPreflight);
   const selectedCloudProvider = useSessionStore((s) => (
     sessionId
       ? s.sessions.find((session) => session.id === sessionId)?.cloudProvider ?? 'hf-jobs'
       : 'hf-jobs'
+  ));
+  const selectedTrainingGoal = useSessionStore((s) => (
+    sessionId
+      ? s.sessions.find((session) => session.id === sessionId)?.trainingGoal ?? DEFAULT_TRAINING_GOAL
+      : DEFAULT_TRAINING_GOAL
+  ));
+  const selectedOutputPolicy = useSessionStore((s) => (
+    sessionId
+      ? s.sessions.find((session) => session.id === sessionId)?.outputPolicy ?? DEFAULT_OUTPUT_POLICY
+      : DEFAULT_OUTPUT_POLICY
   ));
   const [awaitingTopUp, setAwaitingTopUp] = useState(false);
   const [modelSwitchError, setModelSwitchError] = useState<string | null>(null);
@@ -254,10 +275,16 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
         if (data?.cloud_provider === 'hf-jobs' || data?.cloud_provider === 'gcp-vertex') {
           updateSessionCloudProvider(sessionId, data.cloud_provider);
         }
+        if (data?.training_goal || data?.output_policy) {
+          updateSessionGcloudPreflight(sessionId, {
+            trainingGoal: data.training_goal,
+            outputPolicy: data.output_policy,
+          });
+        }
       })
       .catch(() => { /* ignore */ });
     return () => { cancelled = true; };
-  }, [sessionId, updateSessionModel, updateSessionCloudProvider]);
+  }, [sessionId, updateSessionModel, updateSessionCloudProvider, updateSessionGcloudPreflight]);
 
   const selectedModel = modelOptions.find(m => m.id === selectedModelId) || modelOptions[0];
   const selectedProvider = CLOUD_PROVIDER_OPTIONS.find((provider) => provider.id === selectedCloudProvider)
@@ -397,6 +424,14 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
     setProviderAnchorEl(null);
   };
 
+  const handleTrainingGoalClose = () => {
+    setTrainingGoalAnchorEl(null);
+  };
+
+  const handleOutputPolicyClose = () => {
+    setOutputPolicyAnchorEl(null);
+  };
+
   const handleSelectProvider = async (provider: CloudProviderId) => {
     handleProviderClose();
     if (!sessionId) return;
@@ -405,7 +440,11 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
     try {
       const res = await apiFetch(`/api/session/${sessionId}/cloud-provider`, {
         method: 'POST',
-        body: JSON.stringify({ cloud_provider: provider }),
+        body: JSON.stringify({
+          cloud_provider: provider,
+          training_goal: selectedTrainingGoal,
+          output_policy: selectedOutputPolicy,
+        }),
       });
       if (!res.ok) {
         updateSessionCloudProvider(sessionId, previousProvider);
@@ -416,6 +455,54 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
     } catch (error) {
       updateSessionCloudProvider(sessionId, previousProvider);
       setModelSwitchError(error instanceof Error ? error.message : 'Could not switch training provider.');
+    }
+  };
+
+  const handleSelectTrainingGoal = async (trainingGoal: TrainingGoal) => {
+    handleTrainingGoalClose();
+    if (!sessionId) return;
+    const previous = selectedTrainingGoal;
+    updateSessionGcloudPreflight(sessionId, { trainingGoal });
+    try {
+      const res = await apiFetch(`/api/session/${sessionId}/cloud-provider`, {
+        method: 'POST',
+        body: JSON.stringify({
+          cloud_provider: selectedCloudProvider,
+          training_goal: trainingGoal,
+          output_policy: selectedOutputPolicy,
+        }),
+      });
+      if (!res.ok) {
+        updateSessionGcloudPreflight(sessionId, { trainingGoal: previous });
+        setModelSwitchError(await readApiErrorMessage(res, 'Could not update training goal.'));
+      }
+    } catch (error) {
+      updateSessionGcloudPreflight(sessionId, { trainingGoal: previous });
+      setModelSwitchError(error instanceof Error ? error.message : 'Could not update training goal.');
+    }
+  };
+
+  const handleSelectOutputPolicy = async (outputPolicy: OutputPolicy) => {
+    handleOutputPolicyClose();
+    if (!sessionId) return;
+    const previous = selectedOutputPolicy;
+    updateSessionGcloudPreflight(sessionId, { outputPolicy });
+    try {
+      const res = await apiFetch(`/api/session/${sessionId}/cloud-provider`, {
+        method: 'POST',
+        body: JSON.stringify({
+          cloud_provider: selectedCloudProvider,
+          training_goal: selectedTrainingGoal,
+          output_policy: outputPolicy,
+        }),
+      });
+      if (!res.ok) {
+        updateSessionGcloudPreflight(sessionId, { outputPolicy: previous });
+        setModelSwitchError(await readApiErrorMessage(res, 'Could not update final model storage.'));
+      }
+    } catch (error) {
+      updateSessionGcloudPreflight(sessionId, { outputPolicy: previous });
+      setModelSwitchError(error instanceof Error ? error.message : 'Could not update final model storage.');
     }
   };
 
@@ -793,6 +880,52 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
             </Typography>
             <ArrowDropDownIcon sx={{ fontSize: '14px', color: 'var(--muted-text)' }} />
           </Box>
+
+          {selectedCloudProvider === 'gcp-vertex' && (
+            <>
+              <Box
+                onClick={(event) => setTrainingGoalAnchorEl(event.currentTarget)}
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.6,
+                  opacity: 0.75,
+                  cursor: 'pointer',
+                  transition: 'opacity 0.2s',
+                  '&:hover': { opacity: 1 },
+                }}
+              >
+                <Typography variant="caption" sx={{ fontSize: '10px', color: 'var(--muted-text)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 500 }}>
+                  goal
+                </Typography>
+                <Typography variant="caption" sx={{ fontSize: '10px', color: 'var(--text)', fontWeight: 600, letterSpacing: '0.02em' }}>
+                  {trainingGoalLabel(selectedTrainingGoal)}
+                </Typography>
+                <ArrowDropDownIcon sx={{ fontSize: '14px', color: 'var(--muted-text)' }} />
+              </Box>
+
+              <Box
+                onClick={(event) => setOutputPolicyAnchorEl(event.currentTarget)}
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.6,
+                  opacity: 0.75,
+                  cursor: 'pointer',
+                  transition: 'opacity 0.2s',
+                  '&:hover': { opacity: 1 },
+                }}
+              >
+                <Typography variant="caption" sx={{ fontSize: '10px', color: 'var(--muted-text)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 500 }}>
+                  storage
+                </Typography>
+                <Typography variant="caption" sx={{ fontSize: '10px', color: 'var(--text)', fontWeight: 600, letterSpacing: '0.02em' }}>
+                  {outputPolicyLabel(selectedOutputPolicy)}
+                </Typography>
+                <ArrowDropDownIcon sx={{ fontSize: '14px', color: 'var(--muted-text)' }} />
+              </Box>
+            </>
+          )}
         </Box>
 
         {/* Model Selection Menu */}
@@ -875,6 +1008,46 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
                   sx: { fontSize: '12px', color: 'var(--muted-text)' }
                 }}
               />
+            </MenuItem>
+          ))}
+        </Menu>
+
+        {/* GCloud Training Goal Menu */}
+        <Menu
+          anchorEl={trainingGoalAnchorEl}
+          open={Boolean(trainingGoalAnchorEl)}
+          onClose={handleTrainingGoalClose}
+          anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+          transformOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          slotProps={{ paper: { sx: { bgcolor: 'var(--panel)', border: '1px solid var(--divider)', mb: 1, minWidth: '260px' } } }}
+        >
+          {TRAINING_GOAL_OPTIONS.map((option) => (
+            <MenuItem
+              key={option.value}
+              onClick={() => handleSelectTrainingGoal(option.value)}
+              selected={selectedTrainingGoal === option.value}
+            >
+              <ListItemText primary={option.label} />
+            </MenuItem>
+          ))}
+        </Menu>
+
+        {/* GCloud Output Policy Menu */}
+        <Menu
+          anchorEl={outputPolicyAnchorEl}
+          open={Boolean(outputPolicyAnchorEl)}
+          onClose={handleOutputPolicyClose}
+          anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+          transformOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          slotProps={{ paper: { sx: { bgcolor: 'var(--panel)', border: '1px solid var(--divider)', mb: 1, minWidth: '320px' } } }}
+        >
+          {OUTPUT_POLICY_OPTIONS.map((option) => (
+            <MenuItem
+              key={option.value}
+              onClick={() => handleSelectOutputPolicy(option.value)}
+              selected={selectedOutputPolicy === option.value}
+            >
+              <ListItemText primary={option.label} />
             </MenuItem>
           ))}
         </Menu>

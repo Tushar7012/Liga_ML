@@ -12,6 +12,8 @@ import { useLayoutStore } from '@/store/layoutStore';
 import { logger } from '@/utils/logger';
 import { RESEARCH_MAX_STEPS } from '@/lib/research-store';
 import { appendTrainingResultSummary, buildVertexStateMarkdown, createVertexRunPanel } from '@/lib/vertex-job-panel';
+import { storageDestinationLabel, trainingGoalLabel } from '@/lib/gcloud-preflight';
+import type { OutputPolicy, TrainingGoal } from '@/types/agent';
 import type { UIMessage } from 'ai';
 
 // ---------------------------------------------------------------------------
@@ -650,6 +652,8 @@ function InlineApproval({
         const operation = String(args.operation || '').toLowerCase();
         if (operation !== 'run' && operation !== 'cancel') return null;
         const maxRunHours = args.max_run_hours ?? args.timeout_hours;
+        const trainingGoal = args.training_goal as TrainingGoal | undefined;
+        const outputPolicy = args.output_policy as OutputPolicy | undefined;
         return (
           <Box sx={{ mb: 1.5 }}>
             <Typography variant="body2" sx={{ color: 'var(--muted-text)', fontSize: '0.75rem', mb: 0.5 }}>
@@ -662,6 +666,18 @@ function InlineApproval({
                 Max runtime for approval guardrails:{' '}
                 <Box component="span" sx={{ color: 'var(--text)', fontWeight: 500 }}>
                   {String(maxRunHours)} hour{Number(maxRunHours) === 1 ? '' : 's'}
+                </Box>
+              </Typography>
+            )}
+            {operation === 'run' && (
+              <Typography variant="body2" sx={{ color: 'var(--muted-text)', fontSize: '0.7rem', opacity: 0.8 }}>
+                Training goal:{' '}
+                <Box component="span" sx={{ color: 'var(--text)', fontWeight: 500 }}>
+                  {trainingGoalLabel(trainingGoal)}
+                </Box>
+                {' · '}Storage destination:{' '}
+                <Box component="span" sx={{ color: 'var(--text)', fontWeight: 500 }}>
+                  {storageDestinationLabel(outputPolicy)}
                 </Box>
               </Typography>
             )}

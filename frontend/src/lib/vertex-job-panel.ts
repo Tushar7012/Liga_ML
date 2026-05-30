@@ -1,5 +1,7 @@
 import type { PanelData } from '@/store/agentStore';
 import { parseLigaTrainingResult, type TrainingResult } from '@/utils/trainingResult';
+import { outputPolicyLabel, storageDestinationLabel, trainingGoalLabel } from '@/lib/gcloud-preflight';
+import type { OutputPolicy, TrainingGoal } from '@/types/agent';
 
 export interface VertexToolState {
   state?: string;
@@ -13,6 +15,8 @@ const VERTEX_SUMMARY_FIELDS = [
   ['Dataset config', 'dataset_config'],
   ['Dataset split', 'dataset_split'],
   ['Model', 'model_name'],
+  ['Training goal', 'training_goal'],
+  ['Output policy', 'output_policy'],
   ['HF target', 'hub_model_id'],
   ['Machine type', 'machine_type'],
   ['Accelerator type', 'accelerator_type'],
@@ -30,10 +34,20 @@ function valueToString(value: unknown): string | null {
   return String(value);
 }
 
+function summaryValue(label: string, value: unknown): string | null {
+  if (label === 'Training goal') {
+    return trainingGoalLabel(value as TrainingGoal | undefined);
+  }
+  if (label === 'Output policy') {
+    return outputPolicyLabel(value as OutputPolicy | undefined);
+  }
+  return valueToString(value);
+}
+
 export function buildVertexSftSummary(args: Record<string, unknown>): string {
   const rows = VERTEX_SUMMARY_FIELDS
     .map(([label, key]) => {
-      const value = valueToString(args[key]);
+      const value = summaryValue(label, args[key]);
       return value ? `| ${label} | \`${value}\` |` : null;
     })
     .filter((row): row is string => Boolean(row));
@@ -82,6 +96,7 @@ export function buildTrainingResultMarkdown(result: TrainingResult): string {
   const rows = [
     ['Status', result.status],
     ['Provider', result.provider],
+    ['Output policy', result.outputPolicy],
     ['Final HF model', result.finalModelUrl],
     ['Hub model ID', result.hubModelId],
     ['GCS output directory', result.gcsOutputDir],
@@ -159,10 +174,17 @@ export function createVertexRunPanel(args: Record<string, unknown>): {
   }
 
   if (args.template === 'sft') {
+    const policy = args.output_policy as OutputPolicy | undefined;
     return {
       data: {
         title: 'Vertex AI SFT Training',
-        output: { content: buildVertexSftSummary(args), language: 'markdown' },
+        output: {
+          content: [
+            buildVertexSftSummary(args),
+            `**Storage destination:** ${storageDestinationLabel(policy)}`,
+          ].join('\n\n'),
+          language: 'markdown',
+        },
         parameters: args,
       },
       view: 'output',

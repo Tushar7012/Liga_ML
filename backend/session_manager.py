@@ -101,6 +101,8 @@ class AgentSession:
     broadcaster: Any = None
     title: str | None = None
     cloud_provider: str = "hf-jobs"
+    training_goal: str = "agent-decide"
+    output_policy: str = "cloud-and-hf-hub"
     # True once this session has been counted against the user's daily
     # Claude quota. Guards double-counting when the user re-selects an
     # Anthropic model mid-session.
@@ -172,6 +174,8 @@ class SessionManager:
         event_queue: asyncio.Queue,
         notification_destinations: list[str] | None = None,
         cloud_provider: str = "hf-jobs",
+        training_goal: str = "agent-decide",
+        output_policy: str = "cloud-and-hf-hub",
     ) -> tuple[ToolRouter, Session]:
         """Build blocking per-session resources in a worker thread."""
         import time as _time
@@ -196,6 +200,8 @@ class SessionManager:
             persistence_store=self._store(),
         )
         session.cloud_provider = cloud_provider
+        session.training_goal = training_goal
+        session.output_policy = output_policy
         t1 = _time.monotonic()
         logger.info("Session initialized in %.2fs", t1 - t0)
         return tool_router, session
@@ -541,6 +547,8 @@ class SessionManager:
                     or 0.0
                 ),
                 cloud_provider=agent_session.cloud_provider,
+                training_goal=agent_session.training_goal,
+                output_policy=agent_session.output_policy,
             )
         except Exception as e:
             logger.warning(
@@ -610,6 +618,8 @@ class SessionManager:
 
         model = meta.get("model") or self.config.model_name
         cloud_provider = meta.get("cloud_provider") or "hf-jobs"
+        training_goal = meta.get("training_goal") or "agent-decide"
+        output_policy = meta.get("output_policy") or "cloud-and-hf-hub"
         event_queue: asyncio.Queue = asyncio.Queue()
         submission_queue: asyncio.Queue = asyncio.Queue()
         tool_router, session = await asyncio.to_thread(
@@ -622,6 +632,8 @@ class SessionManager:
             event_queue=event_queue,
             notification_destinations=meta.get("notification_destinations") or [],
             cloud_provider=cloud_provider,
+            training_goal=training_goal,
+            output_policy=output_policy,
         )
 
         restored_messages: list[Message] = []
@@ -669,6 +681,8 @@ class SessionManager:
             claude_counted=bool(meta.get("claude_counted")),
             title=meta.get("title"),
             cloud_provider=cloud_provider,
+            training_goal=training_goal,
+            output_policy=output_policy,
         )
         started = await self._start_agent_session(
             agent_session=agent_session,
@@ -695,6 +709,8 @@ class SessionManager:
         model: str | None = None,
         is_pro: bool | None = None,
         cloud_provider: str = "hf-jobs",
+        training_goal: str = "agent-decide",
+        output_policy: str = "cloud-and-hf-hub",
     ) -> str:
         """Create a new agent session and return its ID.
 
@@ -748,6 +764,8 @@ class SessionManager:
             model=model,
             event_queue=event_queue,
             cloud_provider=cloud_provider,
+            training_goal=training_goal,
+            output_policy=output_policy,
         )
 
         # Create wrapper
@@ -760,6 +778,8 @@ class SessionManager:
             hf_username=hf_username,
             hf_token=hf_token,
             cloud_provider=cloud_provider,
+            training_goal=training_goal,
+            output_policy=output_policy,
         )
 
         await self._start_agent_session(
@@ -1016,16 +1036,38 @@ class SessionManager:
         return True
 
     async def submit_user_input(
-        self, session_id: str, text: str, cloud_provider: str | None = None
+        self,
+        session_id: str,
+        text: str,
+        cloud_provider: str | None = None,
+        training_goal: str | None = None,
+        output_policy: str | None = None,
     ) -> bool:
         """Submit user input to a session."""
         agent_session = self.sessions.get(session_id)
         if cloud_provider in {"hf-jobs", "gcp-vertex"} and agent_session:
             agent_session.cloud_provider = cloud_provider
             agent_session.session.cloud_provider = cloud_provider
+        if (
+            training_goal in {"smoke-test", "production", "agent-decide"}
+            and agent_session
+        ):
+            agent_session.training_goal = training_goal
+            agent_session.session.training_goal = training_goal
+        if (
+            output_policy in {"cloud-private", "hf-hub", "cloud-and-hf-hub"}
+            and agent_session
+        ):
+            agent_session.output_policy = output_policy
+            agent_session.session.output_policy = output_policy
         operation = Operation(
             op_type=OpType.USER_INPUT,
-            data={"text": text, "cloud_provider": cloud_provider},
+            data={
+                "text": text,
+                "cloud_provider": cloud_provider,
+                "training_goal": training_goal,
+                "output_policy": output_policy,
+            },
         )
         return await self.submit(session_id, operation)
 
@@ -1138,13 +1180,23 @@ class SessionManager:
         return True
 
     async def update_session_cloud_provider(
-        self, session_id: str, cloud_provider: str
+        self,
+        session_id: str,
+        cloud_provider: str,
+        training_goal: str | None = None,
+        output_policy: str | None = None,
     ) -> bool:
         agent_session = self.sessions.get(session_id)
         if not agent_session or not agent_session.is_active:
             return False
         agent_session.cloud_provider = cloud_provider
         agent_session.session.cloud_provider = cloud_provider
+        if training_goal in {"smoke-test", "production", "agent-decide"}:
+            agent_session.training_goal = training_goal
+            agent_session.session.training_goal = training_goal
+        if output_policy in {"cloud-private", "hf-hub", "cloud-and-hf-hub"}:
+            agent_session.output_policy = output_policy
+            agent_session.session.output_policy = output_policy
         await self.persist_session_snapshot(agent_session, runtime_state="idle")
         return True
 
@@ -1222,6 +1274,8 @@ class SessionManager:
             "pending_approval": pending_approval,
             "model": agent_session.session.config.model_name,
             "cloud_provider": agent_session.cloud_provider,
+            "training_goal": agent_session.training_goal,
+            "output_policy": agent_session.output_policy,
             "title": agent_session.title,
             "notification_destinations": list(
                 agent_session.session.notification_destinations
@@ -1290,6 +1344,8 @@ class SessionManager:
                         "pending_approval": pending or None,
                         "model": row.get("model"),
                         "cloud_provider": row.get("cloud_provider") or "hf-jobs",
+                        "training_goal": row.get("training_goal") or "agent-decide",
+                        "output_policy": row.get("output_policy") or "cloud-and-hf-hub",
                         "title": row.get("title"),
                         "notification_destinations": row.get(
                             "notification_destinations"
