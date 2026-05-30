@@ -13,6 +13,17 @@ import type { ToolStateChangeEventData } from '@/types/events';
 import { useAgentStore } from '@/store/agentStore';
 import { useSessionStore } from '@/store/sessionStore';
 import { buildGcloudChatRequestMetadata } from '@/lib/gcloud-preflight';
+import { consumeExplicitApprovalDecision } from '@/lib/explicit-tool-approvals';
+
+function emptyFinishStream(): ReadableStream<UIMessageChunk> {
+  return new ReadableStream<UIMessageChunk>({
+    start(controller) {
+      controller.enqueue({ type: 'finish-step' });
+      controller.enqueue({ type: 'finish', finishReason: 'stop' });
+      controller.close();
+    },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Side-channel callback interface (non-chat events forwarded to the store)
@@ -391,16 +402,22 @@ export class SSEChatTransport implements ChatTransport<UIMessage> {
       // Approval continuation — extract approval decisions
       const approvals = approvedParts.map((p) => {
         if (p.type !== 'dynamic-tool') return null;
-        const approved = p.approval?.approved ?? true;
+        const explicitDecision = consumeExplicitApprovalDecision(sessionId, p.toolCallId);
+        if (!explicitDecision) return null;
+        const approved = explicitDecision.approved;
         const editedScript = useAgentStore.getState().getEditedScript(p.toolCallId);
         return {
           tool_call_id: p.toolCallId,
           approved,
-          feedback: approved ? null : (p.approval?.reason || 'Rejected by user'),
-          edited_script: editedScript ?? null,
-          namespace: null,
+          feedback: approved ? null : (explicitDecision.feedback || 'Rejected by user'),
+          edited_script: editedScript ?? explicitDecision.edited_script ?? null,
+          namespace: explicitDecision.namespace ?? null,
         };
       }).filter(Boolean);
+      if (approvals.length === 0) {
+        logger.warn('Ignoring approval continuation without explicit user approval');
+        return emptyFinishStream();
+      }
       body = { approvals };
     } else {
       // Normal user message

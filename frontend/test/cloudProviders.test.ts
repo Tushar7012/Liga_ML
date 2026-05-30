@@ -9,6 +9,11 @@ import {
   storageDestinationLabel,
   trainingGoalLabel,
 } from '../src/lib/gcloud-preflight.js';
+import {
+  clearExplicitToolApprovalsForTesting,
+  consumeExplicitApprovalDecision,
+  registerExplicitToolApprovals,
+} from '../src/lib/explicit-tool-approvals.js';
 import type { OutputPolicy, TrainingGoal } from '../src/types/agent.js';
 
 test('defines GCloud preflight option labels and defaults', () => {
@@ -66,4 +71,22 @@ test('formats storage destination for Vertex panel summaries', () => {
   assert.equal(storageDestinationLabel('cloud-private'), 'Google Cloud Storage only');
   assert.equal(storageDestinationLabel('hf-hub'), 'Hugging Face Hub only');
   assert.equal(storageDestinationLabel('cloud-and-hf-hub'), 'Google Cloud Storage and Hugging Face Hub');
+});
+
+test('requires an explicit user approval before consuming a tool approval decision', () => {
+  clearExplicitToolApprovalsForTesting();
+
+  assert.equal(consumeExplicitApprovalDecision('session-1', 'tool-1'), null);
+
+  registerExplicitToolApprovals('session-1', [
+    { tool_call_id: 'tool-1', approved: true },
+  ]);
+
+  assert.deepEqual(consumeExplicitApprovalDecision('session-1', 'tool-1'), {
+    approved: true,
+    feedback: null,
+    edited_script: null,
+    namespace: null,
+  });
+  assert.equal(consumeExplicitApprovalDecision('session-1', 'tool-1'), null);
 });

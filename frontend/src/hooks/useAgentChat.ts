@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useChat } from '@ai-sdk/react';
 import { type UIMessage, lastAssistantMessageIsCompleteWithApprovalResponses } from 'ai';
 import { SSEChatTransport, type SideChannelCallbacks } from '@/lib/sse-chat-transport';
+import { registerExplicitToolApprovals } from '@/lib/explicit-tool-approvals';
 import { loadMessages, saveMessages } from '@/lib/chat-message-store';
 import { saveBackendMessages } from '@/lib/backend-message-store';
 import { saveResearch, loadResearch, clearResearch, RESEARCH_MAX_STEPS } from '@/lib/research-store';
@@ -835,6 +836,7 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
           useAgentStore.getState().setEditedScript(a.tool_call_id, a.edited_script);
         }
       }
+      registerExplicitToolApprovals(sessionId, approvals);
 
       // Update SDK tool state — this triggers sendMessages() via the transport
       for (const a of approvals) {
