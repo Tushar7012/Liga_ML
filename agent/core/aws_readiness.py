@@ -64,6 +64,7 @@ def build_aws_sagemaker_readiness_snapshot() -> dict[str, Any]:
     role_arn = _env_str("AWS_SAGEMAKER_ROLE_ARN")
     instance_type = _env_str("AWS_DEFAULT_INSTANCE_TYPE", DEFAULT_AWS_INSTANCE_TYPE)
     output_policy = _env_str("AWS_OUTPUT_POLICY", DEFAULT_AWS_OUTPUT_POLICY)
+    training_image_uri = _env_str("AWS_SAGEMAKER_TRAINING_IMAGE_URI")
 
     instance_count, count_errors = _positive_int_env(
         "AWS_DEFAULT_INSTANCE_COUNT", DEFAULT_AWS_INSTANCE_COUNT
@@ -106,6 +107,7 @@ def build_aws_sagemaker_readiness_snapshot() -> dict[str, Any]:
         "default_instance_count": instance_count,
         "default_max_run_seconds": max_run_seconds,
         "output_policy": output_policy or DEFAULT_AWS_OUTPUT_POLICY,
+        "training_image_uri": training_image_uri,
         "credentials_detected": credentials_detected,
         "warnings": warnings,
         "errors": errors,

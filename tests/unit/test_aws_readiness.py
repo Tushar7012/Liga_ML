@@ -13,6 +13,7 @@ def _clear_aws_env(monkeypatch):
         "AWS_DEFAULT_INSTANCE_COUNT",
         "AWS_DEFAULT_MAX_RUN_SECONDS",
         "AWS_OUTPUT_POLICY",
+        "AWS_SAGEMAKER_TRAINING_IMAGE_URI",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
         "AWS_SESSION_TOKEN",
@@ -42,6 +43,7 @@ def test_aws_readiness_missing_env_is_safe(monkeypatch):
     assert snapshot["default_instance_count"] == 1
     assert snapshot["default_max_run_seconds"] == 3600
     assert snapshot["output_policy"] == "aws-private"
+    assert snapshot["training_image_uri"] is None
     assert snapshot["credentials_detected"] is False
     assert "access_key" not in str(snapshot).lower()
     assert "secret" not in str(snapshot).lower()
@@ -59,6 +61,7 @@ def test_aws_readiness_required_env_and_mocked_credentials_true(monkeypatch):
     monkeypatch.setenv("AWS_DEFAULT_INSTANCE_COUNT", "2")
     monkeypatch.setenv("AWS_DEFAULT_MAX_RUN_SECONDS", "7200")
     monkeypatch.setenv("AWS_OUTPUT_POLICY", "hf-hub")
+    monkeypatch.setenv("AWS_SAGEMAKER_TRAINING_IMAGE_URI", "example-image")
     monkeypatch.setattr(aws_readiness, "_detect_aws_credentials", lambda: (True, []))
 
     snapshot = aws_readiness.build_aws_sagemaker_readiness_snapshot()
@@ -73,6 +76,7 @@ def test_aws_readiness_required_env_and_mocked_credentials_true(monkeypatch):
     assert snapshot["default_instance_count"] == 2
     assert snapshot["default_max_run_seconds"] == 7200
     assert snapshot["output_policy"] == "hf-hub"
+    assert snapshot["training_image_uri"] == "example-image"
     assert snapshot["credentials_detected"] is True
     assert snapshot["warnings"] == []
     assert snapshot["errors"] == []

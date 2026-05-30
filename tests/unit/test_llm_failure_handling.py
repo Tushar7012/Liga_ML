@@ -188,8 +188,9 @@ async def test_aws_provider_note_routes_training_to_sagemaker_tool(monkeypatch):
     note = "\n".join(str(getattr(message, "content", "")) for message in seen_messages)
     assert "AWS SageMaker AI" in note
     assert "aws_sagemaker_jobs" in note
-    assert "stage normalized datasets to S3" in note
-    assert "SageMaker training job submission is not enabled" in note
+    assert "stages normalized datasets to S3" in note
+    assert "can submit SageMaker training jobs" in note
+    assert "training image config" in note
     assert "do not route to Hugging Face Jobs or Google Cloud Vertex AI" in note
     assert "uploaded dataset" in note.lower()
     assert "approval-gated" in note.lower()

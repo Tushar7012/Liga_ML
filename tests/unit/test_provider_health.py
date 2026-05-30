@@ -43,6 +43,7 @@ async def test_provider_health_returns_hf_gcp_and_aws(monkeypatch):
             "default_instance_count": 1,
             "default_max_run_seconds": 3600,
             "output_policy": "aws-private",
+            "training_image_uri": None,
             "credentials_detected": False,
             "warnings": [],
             "errors": ["Missing required AWS environment variables."],
