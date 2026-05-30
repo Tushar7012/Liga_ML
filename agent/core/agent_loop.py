@@ -2319,12 +2319,13 @@ async def process_submission(session: Session, submission) -> bool:
                     "aws_sagemaker_jobs and do not route to Hugging Face Jobs or "
                     "Google Cloud Vertex AI compute unless the provider changes. "
                     "Use normalized uploaded dataset configs from this session "
-                    "when present. Before launching any billable AWS training "
-                    "job, produce a preflight and request approval for "
-                    "aws_sagemaker_jobs operation run. In this build, AWS Phase "
-                    "2 validates request/readiness/cost but does not submit real "
-                    "SageMaker jobs until S3 staging and training templates are "
-                    "implemented."
+                    "when present. For AWS training/fine-tuning, "
+                    "aws_sagemaker_jobs can validate requests and stage "
+                    "normalized datasets to S3, but SageMaker training job "
+                    "submission is not enabled until a later phase. Operation "
+                    "run and cancel are approval-gated; do not use Hugging "
+                    "Face Jobs or Google Cloud Vertex AI compute unless the "
+                    "provider changes."
                 )
             else:
                 provider_instruction = (

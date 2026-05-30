@@ -1,17 +1,20 @@
-"""Safe AWS SageMaker Jobs tool skeleton.
+"""Safe AWS SageMaker Jobs tool.
 
-Phase 2 validates AWS readiness, request shape, and conservative cost metadata
-without submitting SageMaker jobs or calling live AWS APIs.
+Phase 3 validates AWS readiness and request shape, stages normalized datasets
+to S3, and returns conservative cost metadata without submitting SageMaker jobs.
 """
 
 from __future__ import annotations
 
+import os
 import re
 from datetime import datetime, timezone
 from typing import Any
 
+from agent.core.aws_dataset_staging import stage_hf_dataset_to_s3
 from agent.core.aws_readiness import build_aws_sagemaker_readiness_snapshot
 from agent.core.cost_estimation import estimate_aws_sagemaker_job_cost
+from agent.core.session import Event
 from agent.tools.types import ToolResult
 
 AWS_OUTPUT_POLICIES = {"aws-private", "hf-hub", "cloud-and-hf-hub"}
@@ -69,10 +72,12 @@ class AwsSageMakerJobsTool:
         session: Any = None,
         tool_call_id: str | None = None,
         sagemaker_client: Any | None = None,
+        s3_client: Any | None = None,
     ) -> None:
         self.session = session
         self.tool_call_id = tool_call_id
         self.sagemaker_client = sagemaker_client
+        self.s3_client = s3_client
 
     async def execute(self, params: dict[str, Any]) -> ToolResult:
         operation = str(params.get("operation", "")).lower().strip()
@@ -127,6 +132,13 @@ class AwsSageMakerJobsTool:
                 + "."
             )
 
+        dataset_name = str(args.get("dataset_name") or "").strip()
+        dataset_config = (
+            str(args.get("dataset_config")).strip()
+            if args.get("dataset_config") not in (None, "")
+            else None
+        )
+        dataset_split = str(args.get("dataset_split") or "train").strip() or "train"
         cost = await estimate_aws_sagemaker_job_cost(
             {
                 "operation": "run",
@@ -141,12 +153,56 @@ class AwsSageMakerJobsTool:
             else f"**Conservative cost estimate:** unavailable ({cost.block_reason})\n"
         )
 
+        hf_token = self._hf_token()
+        try:
+            staged = await stage_hf_dataset_to_s3(
+                dataset_name=dataset_name,
+                dataset_config=dataset_config,
+                dataset_split=dataset_split,
+                s3_bucket=str(s3_bucket),
+                s3_prefix=s3_prefix,
+                job_name=job_name,
+                session_id=getattr(self.session, "session_id", None),
+                hf_token=hf_token,
+                s3_client=self.s3_client,
+            )
+        except Exception as exc:
+            return self._error(str(exc))
+
+        await self._emit_staged_state(staged, job_name)
+
+        metadata = {
+            "state": "staged",
+            "job_name": job_name,
+            "region": region,
+            "s3_train_uri": staged.s3_train_uri,
+            "s3_prefix_uri": staged.s3_prefix_uri,
+            "s3_output_uri": staged.s3_output_uri,
+            "s3_checkpoint_uri": staged.s3_checkpoint_uri,
+            "row_count": staged.row_count,
+            "bytes_uploaded": staged.bytes_uploaded,
+            "dataset_name": staged.dataset_name,
+            "dataset_config": staged.dataset_config,
+            "dataset_split": staged.dataset_split,
+            "instance_type": instance_type,
+            "instance_count": instance_count,
+            "max_run_seconds": max_run_seconds,
+            "output_policy": output_policy,
+            "estimated_cost_usd": cost.estimated_cost_usd,
+        }
+
         return {
             "formatted": (
-                "AWS SageMaker job execution is not implemented until later AWS phases; "
-                "request/readiness validated but no job submitted.\n\n"
-                f"**Would-be job name:** `{job_name}`\n"
+                "AWS SageMaker dataset staging completed; no SageMaker training job submitted.\n\n"
+                "Dataset staged to S3. SageMaker job submission is not implemented until a later "
+                "AWS phase; no training job was created.\n\n"
+                f"**Job name:** `{job_name}`\n"
                 f"**Region:** `{region}`\n"
+                f"**S3 train URI:** `{staged.s3_train_uri}`\n"
+                f"**S3 output URI:** `{staged.s3_output_uri}`\n"
+                f"**S3 checkpoint URI:** `{staged.s3_checkpoint_uri}`\n"
+                f"**Rows staged:** `{staged.row_count}`\n"
+                f"**Bytes uploaded:** `{staged.bytes_uploaded}`\n"
                 f"**Instance type:** `{instance_type}`\n"
                 f"**Instance count:** `{instance_count}`\n"
                 f"**Max run seconds:** `{max_run_seconds}`\n"
@@ -155,11 +211,12 @@ class AwsSageMakerJobsTool:
                 f"**S3 prefix:** `{s3_prefix}`\n"
                 f"**Output policy:** `{output_policy}`\n"
                 f"{cost_line}\n"
-                "Phase 2 does not call `create_training_job`, stage data to S3, "
-                "stream CloudWatch logs, or create billable AWS resources."
+                "Phase 3 does not call `create_training_job`, stream CloudWatch logs, "
+                "or create SageMaker training resources."
             ),
             "totalResults": 1,
             "resultsShared": 1,
+            "metadata": metadata,
         }
 
     async def _list_jobs(self) -> ToolResult:
@@ -223,8 +280,38 @@ class AwsSageMakerJobsTool:
             )
         for key in ("dataset_name", "model_name", "output_model_id"):
             if not str(args.get(key) or "").strip():
-                errors.append(f"{key} is required for future SageMaker run preparation")
+                errors.append(f"{key} is required for SageMaker dataset staging")
         return errors
+
+    def _hf_token(self) -> str | None:
+        session_token = getattr(self.session, "hf_token", None)
+        if session_token:
+            return str(session_token)
+        return os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+
+    async def _emit_staged_state(self, staged: Any, job_name: str) -> None:
+        if self.session is None or not self.tool_call_id:
+            return
+        send_event = getattr(self.session, "send_event", None)
+        if send_event is None:
+            return
+        try:
+            await send_event(
+                Event(
+                    event_type="tool_state_change",
+                    data={
+                        "tool_call_id": self.tool_call_id,
+                        "tool": "aws_sagemaker_jobs",
+                        "state": "staged",
+                        "jobName": job_name,
+                        "s3TrainUri": staged.s3_train_uri,
+                        "s3OutputUri": staged.s3_output_uri,
+                        "s3CheckpointUri": staged.s3_checkpoint_uri,
+                    },
+                )
+            )
+        except Exception:
+            return
 
     @staticmethod
     def _missing_config_error(readiness: dict[str, Any]) -> ToolResult:
@@ -254,13 +341,16 @@ class AwsSageMakerJobsTool:
 AWS_SAGEMAKER_JOBS_TOOL_SPEC = {
     "name": "aws_sagemaker_jobs",
     "description": (
-        "Validate AWS SageMaker AI training job requests for Liga ML without launching "
-        "AWS resources. Use this when the session provider is AWS SageMaker AI or the "
+        "Stage normalized datasets to S3 for future AWS SageMaker AI training jobs "
+        "without launching SageMaker training. Use this when the session provider is "
+        "AWS SageMaker AI or the "
         "user asks for AWS/SageMaker training, fine-tuning, SFT, model adaptation, or "
-        "cloud compute. Phase 2 behavior is intentionally safe: run validates readiness, "
-        "request fields, and conservative cost metadata, then reports that execution is "
-        "not implemented until later AWS phases. It does not call create_training_job, "
-        "stage data to S3, stream CloudWatch logs, or create billable AWS resources. "
+        "cloud compute. Phase 3 behavior is intentionally limited: run validates "
+        "readiness, request fields, and conservative cost metadata, loads the normalized "
+        "dataset config, uploads train.jsonl to S3, and reports that SageMaker job "
+        "submission is not implemented until later AWS phases. It does not call "
+        "create_training_job, stream CloudWatch logs, or create SageMaker training "
+        "resources. "
         "Operations: run, ps, inspect, logs, cancel. Run and cancel are approval-gated; "
         "read-only operations are not."
     ),
@@ -275,11 +365,11 @@ AWS_SAGEMAKER_JOBS_TOOL_SPEC = {
             "template": {
                 "type": "string",
                 "enum": ["sft"],
-                "description": "Future training template. Phase 2 validates only.",
+                "description": "Future training template. Phase 3 supports staging only for sft.",
             },
             "dataset_name": {
                 "type": "string",
-                "description": "Dataset id for the future SageMaker job.",
+                "description": "Hugging Face dataset id to load and stage to S3.",
             },
             "dataset_config": {
                 "type": "string",

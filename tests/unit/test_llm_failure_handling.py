@@ -188,11 +188,11 @@ async def test_aws_provider_note_routes_training_to_sagemaker_tool(monkeypatch):
     note = "\n".join(str(getattr(message, "content", "")) for message in seen_messages)
     assert "AWS SageMaker AI" in note
     assert "aws_sagemaker_jobs" in note
-    assert "Phase 2 validates request/readiness/cost" in note
-    assert "does not submit real SageMaker jobs" in note
+    assert "stage normalized datasets to S3" in note
+    assert "SageMaker training job submission is not enabled" in note
     assert "do not route to Hugging Face Jobs or Google Cloud Vertex AI" in note
     assert "uploaded dataset" in note.lower()
-    assert "preflight" in note.lower()
+    assert "approval-gated" in note.lower()
 
 
 @pytest.mark.asyncio
