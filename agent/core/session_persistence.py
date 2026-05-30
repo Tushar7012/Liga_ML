@@ -182,6 +182,7 @@ class MongoSessionStore(NoopSessionStore):
         cloud_provider: str = "hf-jobs",
         training_goal: str = "agent-decide",
         output_policy: str = "cloud-and-hf-hub",
+        uploaded_datasets: list[dict[str, Any]] | None = None,
     ) -> None:
         if not self._ready():
             return
@@ -216,6 +217,7 @@ class MongoSessionStore(NoopSessionStore):
                     "cloud_provider": cloud_provider,
                     "training_goal": training_goal,
                     "output_policy": output_policy,
+                    "uploaded_datasets": uploaded_datasets or [],
                 },
             },
             upsert=True,
@@ -242,6 +244,7 @@ class MongoSessionStore(NoopSessionStore):
         cloud_provider: str = "hf-jobs",
         training_goal: str = "agent-decide",
         output_policy: str = "cloud-and-hf-hub",
+        uploaded_datasets: list[dict[str, Any]] | None = None,
     ) -> None:
         if not self._ready():
             return
@@ -265,6 +268,7 @@ class MongoSessionStore(NoopSessionStore):
             cloud_provider=cloud_provider,
             training_goal=training_goal,
             output_policy=output_policy,
+            uploaded_datasets=uploaded_datasets,
         )
         ops: list[Any] = []
         for idx, raw in enumerate(messages):

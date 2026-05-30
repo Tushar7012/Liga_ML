@@ -221,6 +221,11 @@ class SessionManager:
         return serialized
 
     @staticmethod
+    def _serialize_uploaded_datasets(session: Session) -> list[dict[str, Any]]:
+        uploads = getattr(session, "uploaded_datasets", []) or []
+        return [dict(upload) for upload in uploads if isinstance(upload, dict)]
+
+    @staticmethod
     def _pending_tools_for_api(session: Session) -> list[dict[str, Any]] | None:
         pending = session.pending_approval or {}
         tool_calls = pending.get("tool_calls") or []
@@ -549,6 +554,9 @@ class SessionManager:
                 cloud_provider=agent_session.cloud_provider,
                 training_goal=agent_session.training_goal,
                 output_policy=agent_session.output_policy,
+                uploaded_datasets=self._serialize_uploaded_datasets(
+                    agent_session.session
+                ),
             )
         except Exception as e:
             logger.warning(
@@ -662,6 +670,11 @@ class SessionManager:
         session.auto_approval_estimated_spend_usd = float(
             meta.get("auto_approval_estimated_spend_usd") or 0.0
         )
+        session.uploaded_datasets = [
+            dict(upload)
+            for upload in meta.get("uploaded_datasets") or []
+            if isinstance(upload, dict)
+        ]
 
         created_at = meta.get("created_at")
         if not isinstance(created_at, datetime):
@@ -1281,6 +1294,9 @@ class SessionManager:
                 agent_session.session.notification_destinations
             ),
             "auto_approval": self._auto_approval_summary(agent_session.session),
+            "uploaded_datasets": self._serialize_uploaded_datasets(
+                agent_session.session
+            ),
         }
 
     def set_notification_destinations(
@@ -1375,6 +1391,7 @@ class SessionManager:
                                 )
                             ),
                         },
+                        "uploaded_datasets": row.get("uploaded_datasets") or [],
                     }
                 )
             return results

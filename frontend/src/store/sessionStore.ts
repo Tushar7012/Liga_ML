@@ -1,6 +1,12 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { CloudProviderId, OutputPolicy, SessionMeta, TrainingGoal } from '@/types/agent';
+import type {
+  CloudProviderId,
+  OutputPolicy,
+  SessionMeta,
+  TrainingGoal,
+  UploadedDatasetInfo,
+} from '@/types/agent';
 import { DEFAULT_OUTPUT_POLICY, DEFAULT_TRAINING_GOAL } from '@/lib/gcloud-preflight';
 import { deleteMessages, moveMessages } from '@/lib/chat-message-store';
 import { moveBackendMessages, deleteBackendMessages } from '@/lib/backend-message-store';
@@ -44,6 +50,7 @@ interface SessionStore {
     cloud_provider?: CloudProviderId | null;
     training_goal?: TrainingGoal | null;
     output_policy?: OutputPolicy | null;
+    uploaded_datasets?: UploadedDatasetInfo[];
   }>) => void;
   updateSessionYolo: (id: string, policy: {
     enabled: boolean;
@@ -78,6 +85,7 @@ export const useSessionStore = create<SessionStore>()(
           autoApprovalCostCapUsd: null,
           autoApprovalEstimatedSpendUsd: 0,
           autoApprovalRemainingUsd: null,
+          uploadedDatasets: [],
         };
         set((state) => ({
           sessions: [...state.sessions, newSession],
@@ -135,6 +143,7 @@ export const useSessionStore = create<SessionStore>()(
                 outputPolicy: server.output_policy ?? existing.outputPolicy ?? DEFAULT_OUTPUT_POLICY,
                 needsAttention: Boolean(server.pending_approval?.length) || existing.needsAttention,
                 expired: false,
+                uploadedDatasets: server.uploaded_datasets ?? existing.uploadedDatasets ?? [],
                 ...(auto
                   ? {
                       autoApprovalEnabled: Boolean(auto.enabled),
@@ -164,6 +173,7 @@ export const useSessionStore = create<SessionStore>()(
               autoApprovalCostCapUsd: server.auto_approval?.cost_cap_usd ?? null,
               autoApprovalEstimatedSpendUsd: server.auto_approval?.estimated_spend_usd ?? 0,
               autoApprovalRemainingUsd: server.auto_approval?.remaining_usd ?? null,
+              uploadedDatasets: server.uploaded_datasets ?? [],
             };
             merged.push(newSession);
             byId.set(id, newSession);

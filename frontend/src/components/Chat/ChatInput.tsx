@@ -41,7 +41,13 @@ import {
   isClaudePath,
   isPremiumPath,
 } from '@/utils/model';
-import type { CloudProviderId, DatasetUploadResponse, OutputPolicy, TrainingGoal } from '@/types/agent';
+import type {
+  CloudProviderId,
+  DatasetUploadResponse,
+  OutputPolicy,
+  TrainingGoal,
+  UploadedDatasetInfo,
+} from '@/types/agent';
 
 // Model configuration
 interface ModelOption {
@@ -155,8 +161,8 @@ interface ChatInputProps {
 }
 
 const MAX_DATASET_UPLOAD_BYTES = 100 * 1024 * 1024;
-const DATASET_UPLOAD_ACCEPT = '.csv,.json,.jsonl,.pdf,.docx,.xlsx';
-const DATASET_UPLOAD_EXTENSIONS = new Set(['csv', 'json', 'jsonl', 'pdf', 'docx', 'xlsx']);
+const DATASET_UPLOAD_ACCEPT = '.csv,.json,.jsonl,.pdf,.docx,.xlsx,.md';
+const DATASET_UPLOAD_EXTENSIONS = new Set(['csv', 'json', 'jsonl', 'pdf', 'docx', 'xlsx', 'md']);
 
 const isClaudeModel = (m: ModelOption) => isClaudePath(m.modelPath);
 const isPremiumModel = (m: ModelOption) => isPremiumPath(m.modelPath);
@@ -218,7 +224,7 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
   const [modelSwitchError, setModelSwitchError] = useState<string | null>(null);
   const [datasetUploadError, setDatasetUploadError] = useState<string | null>(null);
   const [datasetUploadSuccess, setDatasetUploadSuccess] = useState<string | null>(null);
-  const [uploadedDatasets, setUploadedDatasets] = useState<DatasetUploadResponse[]>([]);
+  const [uploadedDatasets, setUploadedDatasets] = useState<UploadedDatasetInfo[]>([]);
   const [isUploadingDataset, setIsUploadingDataset] = useState(false);
   const [datasetUploadProgress, setDatasetUploadProgress] = useState<number | null>(null);
   const lastSentRef = useRef<string>('');
@@ -281,6 +287,11 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
             outputPolicy: data.output_policy,
           });
         }
+        if (Array.isArray(data?.uploaded_datasets)) {
+          setUploadedDatasets(data.uploaded_datasets);
+        } else {
+          setUploadedDatasets([]);
+        }
       })
       .catch(() => { /* ignore */ });
     return () => { cancelled = true; };
@@ -322,7 +333,7 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
 
       const extension = file.name.split('.').pop()?.toLowerCase() || '';
       if (!DATASET_UPLOAD_EXTENSIONS.has(extension)) {
-        setDatasetUploadError('Only CSV, JSON, JSONL, PDF, DOCX, and XLSX dataset files are supported.');
+        setDatasetUploadError('Only CSV, JSON, JSONL, PDF, DOCX, XLSX, and Markdown dataset files are supported.');
         return;
       }
       if (file.size > MAX_DATASET_UPLOAD_BYTES) {
@@ -799,29 +810,57 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
           </Box>
         )}
         {uploadedDatasets.length > 0 && (
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, justifyContent: 'center', mt: 1 }}>
-            {uploadedDatasets.map((dataset) => (
-              <Chip
-                key={dataset.upload_id}
-                size="small"
-                label={`Dataset: ${dataset.filename}`}
-                component="a"
-                href={datasetRepoUrl(dataset.repo_id)}
-                target="_blank"
-                rel="noreferrer"
-                clickable
-                sx={{
-                  maxWidth: '100%',
-                  bgcolor: 'rgba(255,255,255,0.08)',
-                  color: 'var(--text)',
-                  border: '1px solid var(--divider)',
-                  '& .MuiChip-label': {
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  },
-                }}
-              />
-            ))}
+          <Box
+            aria-label="Uploaded Data"
+            sx={{
+              mt: 1,
+              p: 1,
+              border: '1px solid var(--divider)',
+              borderRadius: '12px',
+              bgcolor: 'rgba(255,255,255,0.04)',
+            }}
+          >
+            <Typography
+              variant="caption"
+              sx={{
+                display: 'block',
+                mb: 0.75,
+                color: 'var(--muted-text)',
+                fontWeight: 700,
+                letterSpacing: '0.05em',
+                textTransform: 'uppercase',
+              }}
+            >
+              Uploaded Data
+            </Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+              {uploadedDatasets.map((dataset) => {
+                const ready = (dataset.status ?? 'ready') === 'ready' && dataset.supports_training;
+                const rowLabel = `${dataset.normalized_row_count.toLocaleString()} normalized ${dataset.source_format === 'md' ? 'chunks' : 'rows'}`;
+                return (
+                  <Chip
+                    key={dataset.upload_id}
+                    size="small"
+                    label={`${dataset.filename} · ${dataset.source_format.toUpperCase()} · ${rowLabel} · ${ready ? 'Ready for training' : 'Failed'} · ${dataset.config_name}`}
+                    component="a"
+                    href={datasetRepoUrl(dataset.repo_id)}
+                    target="_blank"
+                    rel="noreferrer"
+                    clickable
+                    sx={{
+                      maxWidth: '100%',
+                      bgcolor: ready ? 'rgba(54, 211, 153, 0.12)' : 'rgba(248, 113, 113, 0.12)',
+                      color: 'var(--text)',
+                      border: `1px solid ${ready ? 'rgba(54, 211, 153, 0.35)' : 'rgba(248, 113, 113, 0.35)'}`,
+                      '& .MuiChip-label': {
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      },
+                    }}
+                  />
+                );
+              })}
+            </Box>
           </Box>
         )}
 

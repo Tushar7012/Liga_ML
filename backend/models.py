@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 CloudProviderId = Literal["hf-jobs", "gcp-vertex"]
 TrainingGoal = Literal["smoke-test", "production", "agent-decide"]
 OutputPolicy = Literal["cloud-private", "hf-hub", "cloud-and-hf-hub"]
+DatasetSourceFormat = Literal["csv", "json", "jsonl", "pdf", "docx", "xlsx", "md"]
 
 
 class OpType(str, Enum):
@@ -99,6 +100,25 @@ class SessionAutoApprovalInfo(BaseModel):
     remaining_usd: float | None = None
 
 
+class UploadedDatasetInfo(BaseModel):
+    """Minimal uploaded dataset metadata for session UI and planning context."""
+
+    upload_id: str
+    filename: str
+    format: DatasetSourceFormat
+    source_format: DatasetSourceFormat
+    normalized_row_count: int
+    status: Literal["ready", "failed"] = "ready"
+    supports_training: bool = True
+    config_name: str
+    repo_id: str
+    repo_type: Literal["dataset"] = "dataset"
+    normalized_path_in_repo: str
+    raw_path_in_repo: str
+    hub_url: str
+    load_dataset_snippet: str
+
+
 class SessionInfo(BaseModel):
     """Session metadata."""
 
@@ -118,6 +138,7 @@ class SessionInfo(BaseModel):
     auto_approval: SessionAutoApprovalInfo = Field(
         default_factory=SessionAutoApprovalInfo
     )
+    uploaded_datasets: list[UploadedDatasetInfo] = Field(default_factory=list)
 
 
 class SessionNotificationsRequest(BaseModel):
@@ -148,10 +169,10 @@ class DatasetUploadResponse(BaseModel):
     normalized_path_in_repo: str
     normalized_format: Literal["jsonl"]
     normalized_row_count: int
-    source_format: Literal["csv", "json", "jsonl", "pdf", "docx", "xlsx"]
+    source_format: DatasetSourceFormat
     supports_training: bool
     size_bytes: int
-    format: Literal["csv", "json", "jsonl", "pdf", "docx", "xlsx"]
+    format: DatasetSourceFormat
     hub_url: str
     load_dataset_snippet: str
 

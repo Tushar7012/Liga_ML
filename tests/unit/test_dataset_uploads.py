@@ -141,7 +141,7 @@ def test_sanitize_dataset_filename_strips_paths_and_unsafe_chars():
 
 
 def test_dataset_format_rejects_unsupported_extension():
-    for extension in ["csv", "json", "jsonl", "pdf", "docx", "xlsx"]:
+    for extension in ["csv", "json", "jsonl", "pdf", "docx", "xlsx", "md"]:
         assert (
             dataset_uploads.dataset_format_from_filename(f"rows.{extension}")
             == extension
@@ -173,6 +173,35 @@ def test_normalize_csv_rows_to_training_jsonl_schema():
             "data": {"prompt": "Hi", "completion": "Hello"},
         }
     ]
+
+
+def test_normalize_markdown_chunks_to_training_jsonl_schema():
+    rows = dataset_uploads.normalize_uploaded_dataset(
+        b"# Training Notes\n\nUse concise answers.\n\n## Style\nPrefer examples.",
+        "notes.md",
+        "md",
+    )
+
+    assert rows == [
+        {
+            "source_format": "md",
+            "source_file": "notes.md",
+            "chunk_index": 0,
+            "text": "# Training Notes Use concise answers. ## Style Prefer examples.",
+        }
+    ]
+
+
+def test_normalize_markdown_rejects_empty_text():
+    with pytest.raises(HTTPException) as exc_info:
+        dataset_uploads.normalize_uploaded_dataset(
+            b"   \n\t\n",
+            "empty.md",
+            "md",
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "Markdown dataset contains no usable text" in exc_info.value.detail
 
 
 def test_normalize_json_accepts_lists_named_lists_and_single_objects():
@@ -628,6 +657,100 @@ async def test_upload_route_appends_context_note_and_persists(monkeypatch):
     assert persisted == [agent_session]
     assert request_state["form_called"] is True
     assert close_state["closed"] is True
+
+
+@pytest.mark.asyncio
+async def test_upload_route_records_uploaded_dataset_metadata(monkeypatch):
+    upload = _upload("notes.md", b"# Notes\n\nFine-tune on this.")
+    request, _request_state = _request(upload)
+    agent_session = SimpleNamespace(
+        is_active=True,
+        is_processing=False,
+        session=SimpleNamespace(
+            pending_approval=None,
+            context_manager=SimpleNamespace(add_message=lambda _message: None),
+            uploaded_datasets=[],
+        ),
+        hf_username="alice",
+    )
+    uploaded = dataset_uploads.DatasetUpload(
+        session_id="s1",
+        repo_id="alice/ml-intern-s1-datasets",
+        repo_type="dataset",
+        private=True,
+        upload_id="md123",
+        config_name="upload_md123",
+        filename="notes.md",
+        original_filename="notes.md",
+        path_in_repo="uploads/md123/train.jsonl",
+        raw_path_in_repo="uploads/md123/raw/notes.md",
+        normalized_path_in_repo="uploads/md123/train.jsonl",
+        normalized_format="jsonl",
+        normalized_row_count=1,
+        source_format="md",
+        supports_training=True,
+        size_bytes=27,
+        format="md",
+        hub_url="https://huggingface.co/datasets/alice/ml-intern-s1-datasets/blob/main/uploads/md123/train.jsonl",
+        load_dataset_snippet=(
+            "from datasets import load_dataset\n\n"
+            'dataset = load_dataset("alice/ml-intern-s1-datasets", '
+            '"upload_md123", split="train", token=True)'
+        ),
+    )
+
+    async def fake_check_session_access(*_args, **_kwargs):
+        return agent_session
+
+    async def fake_push_dataset_upload_to_hub(**_kwargs):
+        return uploaded
+
+    async def fake_persist_session_snapshot(_value):
+        return None
+
+    monkeypatch.setattr(agent, "_check_session_access", fake_check_session_access)
+    monkeypatch.setattr(
+        agent, "push_dataset_upload_to_hub", fake_push_dataset_upload_to_hub
+    )
+    monkeypatch.setattr(
+        agent.session_manager,
+        "persist_session_snapshot",
+        fake_persist_session_snapshot,
+    )
+
+    try:
+        response = await agent.upload_session_dataset(
+            "s1",
+            request,
+            {
+                "user_id": "u1",
+                "username": "alice",
+                agent.INTERNAL_HF_TOKEN_KEY: "hf-token",
+            },
+        )
+    finally:
+        await upload.close()
+
+    assert response.source_format == "md"
+    assert response.format == "md"
+    assert agent_session.session.uploaded_datasets == [
+        {
+            "upload_id": "md123",
+            "filename": "notes.md",
+            "format": "md",
+            "source_format": "md",
+            "normalized_row_count": 1,
+            "status": "ready",
+            "supports_training": True,
+            "config_name": "upload_md123",
+            "repo_id": "alice/ml-intern-s1-datasets",
+            "repo_type": "dataset",
+            "normalized_path_in_repo": "uploads/md123/train.jsonl",
+            "raw_path_in_repo": "uploads/md123/raw/notes.md",
+            "hub_url": uploaded.hub_url,
+            "load_dataset_snippet": uploaded.load_dataset_snippet,
+        }
+    ]
 
 
 @pytest.mark.asyncio

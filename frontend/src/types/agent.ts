@@ -17,27 +17,31 @@ export type CloudProviderId = 'hf-jobs' | 'gcp-vertex';
 export type TrainingGoal = 'smoke-test' | 'production' | 'agent-decide';
 export type OutputPolicy = 'cloud-private' | 'hf-hub' | 'cloud-and-hf-hub';
 
-export type DatasetSourceFormat = 'csv' | 'json' | 'jsonl' | 'pdf' | 'docx' | 'xlsx';
+export type DatasetSourceFormat = 'csv' | 'json' | 'jsonl' | 'pdf' | 'docx' | 'xlsx' | 'md';
 
-export interface DatasetUploadResponse {
-  session_id: string;
+export interface UploadedDatasetInfo {
   repo_id: string;
   repo_type: 'dataset';
-  private: true;
   upload_id: string;
   config_name: string;
   filename: string;
-  path_in_repo: string;
   raw_path_in_repo: string;
   normalized_path_in_repo: string;
-  normalized_format: 'jsonl';
   normalized_row_count: number;
   source_format: DatasetSourceFormat;
   supports_training: boolean;
-  size_bytes: number;
   format: DatasetSourceFormat;
+  status?: 'ready' | 'failed';
   hub_url: string;
   load_dataset_snippet: string;
+}
+
+export interface DatasetUploadResponse extends UploadedDatasetInfo {
+  session_id: string;
+  private: true;
+  path_in_repo: string;
+  normalized_format: 'jsonl';
+  size_bytes: number;
 }
 
 export interface SessionMeta {
@@ -59,6 +63,7 @@ export interface SessionMeta {
   autoApprovalCostCapUsd?: number | null;
   autoApprovalEstimatedSpendUsd?: number;
   autoApprovalRemainingUsd?: number | null;
+  uploadedDatasets?: UploadedDatasetInfo[];
 }
 
 export interface ToolApproval {

@@ -100,6 +100,10 @@ system_prompt: |
 
   Looking at data is the best way to boost performance of any ML model plus it reduces the likelihood of failed jobs later.
 
+  For fine-tuning requests, check uploaded session data first. If uploaded data exists, inspect and use the normalized dataset config provided in the session context; do not ask for a local file path and do not ask the user to upload again unless loading that dataset config fails. If multiple uploads exist, prefer the latest upload unless the user mentions a specific upload filename.
+
+  If no uploaded data exists, search allowed current sources for a suitable dataset: Hugging Face Datasets, GitHub, papers/research, and public web pages. Kaggle is future work. Do not rely on Kaggle downloads and do not add Kaggle integration.
+
   # When submitting a training job
 
   Choose the training backend from the user intent:

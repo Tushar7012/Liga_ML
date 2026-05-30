@@ -18,7 +18,7 @@ from openpyxl import load_workbook
 from pypdf import PdfReader
 
 MAX_DATASET_UPLOAD_BYTES = 100 * 1024 * 1024
-ALLOWED_DATASET_EXTENSIONS = {"csv", "json", "jsonl", "pdf", "docx", "xlsx"}
+ALLOWED_DATASET_EXTENSIONS = {"csv", "json", "jsonl", "pdf", "docx", "xlsx", "md"}
 NORMALIZED_DATASET_FILENAME = "train.jsonl"
 NORMALIZED_DATASET_FORMAT = "jsonl"
 _TRAINING_TOP_LEVEL_KEYS = {
@@ -126,7 +126,7 @@ def dataset_format_from_filename(filename: str) -> str:
         raise HTTPException(
             status_code=400,
             detail=(
-                "Only .csv, .json, .jsonl, .pdf, .docx, and .xlsx dataset "
+                "Only .csv, .json, .jsonl, .pdf, .docx, .xlsx, and .md dataset "
                 "files are supported."
             ),
         )
@@ -378,6 +378,25 @@ def _normalize_jsonl(contents: bytes, filename: str) -> list[dict[str, Any]]:
     return rows
 
 
+def _normalize_markdown(contents: bytes, filename: str) -> list[dict[str, Any]]:
+    try:
+        text = contents.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        _bad_dataset("Markdown dataset must be UTF-8 encoded.")
+    chunks = _chunk_text(text)
+    if not chunks:
+        _bad_dataset("Markdown dataset contains no usable text.")
+    return [
+        {
+            "source_format": "md",
+            "source_file": filename,
+            "chunk_index": index,
+            "text": chunk,
+        }
+        for index, chunk in enumerate(chunks)
+    ]
+
+
 def _normalize_pdf(contents: bytes, filename: str) -> list[dict[str, Any]]:
     try:
         reader = PdfReader(io.BytesIO(contents))
@@ -492,6 +511,8 @@ def normalize_uploaded_dataset(
         return _normalize_json(contents, filename)
     if dataset_format == "jsonl":
         return _normalize_jsonl(contents, filename)
+    if dataset_format == "md":
+        return _normalize_markdown(contents, filename)
     if dataset_format == "pdf":
         return _normalize_pdf(contents, filename)
     if dataset_format == "docx":
@@ -669,12 +690,13 @@ does not load directly as train rows.
 
 
 def dataset_context_note(upload: DatasetUpload) -> str:
-    return f"""[SYSTEM: The user uploaded a dataset file for this session.
+    return f"""[SYSTEM: The user has uploaded data for this session.
 
 Use this normalized dataset config for HF Jobs or GCP Vertex training when the
-task needs the uploaded data. Do not look for the uploaded file on local disk,
-do not load the raw file for training, and do not ask the user to upload it
-again unless this Hub reference fails.
+task needs the uploaded data. Prefer the latest uploaded dataset unless the
+user names a different upload. Do not ask for a local file path, do not look
+for the uploaded file on local disk, do not load the raw file for training, and
+do not ask the user to upload again unless this dataset load fails.
 
 - Repo ID: {upload.repo_id}
 - Repo type: dataset
@@ -695,6 +717,25 @@ Load the normalized dataset config with:
 {upload.load_dataset_snippet}
 ```
 ]"""
+
+
+def dataset_session_metadata(upload: DatasetUpload) -> dict[str, str | int | bool]:
+    return {
+        "upload_id": upload.upload_id,
+        "filename": upload.filename,
+        "format": upload.format,
+        "source_format": upload.source_format,
+        "normalized_row_count": upload.normalized_row_count,
+        "status": "ready" if upload.supports_training else "failed",
+        "supports_training": upload.supports_training,
+        "config_name": upload.config_name,
+        "repo_id": upload.repo_id,
+        "repo_type": upload.repo_type,
+        "normalized_path_in_repo": upload.normalized_path_in_repo,
+        "raw_path_in_repo": upload.raw_path_in_repo,
+        "hub_url": upload.hub_url,
+        "load_dataset_snippet": upload.load_dataset_snippet,
+    }
 
 
 async def push_dataset_upload_to_hub(
