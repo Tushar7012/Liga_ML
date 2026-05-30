@@ -20,20 +20,24 @@ export type OutputPolicy = 'cloud-private' | 'hf-hub' | 'cloud-and-hf-hub';
 export type DatasetSourceFormat = 'csv' | 'json' | 'jsonl' | 'pdf' | 'docx' | 'xlsx' | 'md';
 
 export interface UploadedDatasetInfo {
-  repo_id: string;
+  repo_id?: string;
   repo_type: 'dataset';
-  upload_id: string;
-  config_name: string;
-  filename: string;
-  raw_path_in_repo: string;
-  normalized_path_in_repo: string;
-  normalized_row_count: number;
-  source_format: DatasetSourceFormat;
-  supports_training: boolean;
-  format: DatasetSourceFormat;
+  upload_id?: string;
+  config_name?: string;
+  filename?: string;
+  raw_path_in_repo?: string;
+  normalized_path_in_repo?: string;
+  normalized_row_count?: number;
+  normalized_format?: 'jsonl';
+  source_format?: DatasetSourceFormat;
+  source?: string;
+  uploaded_at?: string | null;
+  supports_training?: boolean;
+  size_bytes?: number | null;
+  format?: DatasetSourceFormat;
   status?: 'ready' | 'failed';
-  hub_url: string;
-  load_dataset_snippet: string;
+  hub_url?: string;
+  load_dataset_snippet?: string;
 }
 
 export interface DatasetUploadResponse extends UploadedDatasetInfo {
@@ -42,6 +46,8 @@ export interface DatasetUploadResponse extends UploadedDatasetInfo {
   path_in_repo: string;
   normalized_format: 'jsonl';
   size_bytes: number;
+  source: string;
+  uploaded_at: string;
 }
 
 export interface SessionMeta {

@@ -192,6 +192,55 @@ def test_normalize_markdown_chunks_to_training_jsonl_schema():
     ]
 
 
+def test_normalize_markdown_splits_examples_and_preserves_structured_content():
+    rows = dataset_uploads.normalize_uploaded_dataset(
+        b"""# Fine-tuning Examples
+
+## Example 1
+User: How do I reset my password?
+Assistant: Go to Settings, choose Security, then select Reset Password.
+
+## Example 2
+- User: How do I export my report?
+- Assistant: Open Reports, choose the desired report, and click Export.
+
+| field | value |
+| --- | --- |
+| source | docs |
+
+```python
+print("keep code")
+```
+""",
+        "examples.md",
+        "md",
+    )
+
+    assert len(rows) == 2
+    assert rows[0]["chunk_index"] == 0
+    assert rows[0]["text"].startswith("# Fine-tuning Examples\n\n## Example 1")
+    assert "User: How do I reset my password?" in rows[0]["text"]
+    assert rows[1]["chunk_index"] == 1
+    assert rows[1]["text"].startswith("# Fine-tuning Examples\n\n## Example 2")
+    assert "- User: How do I export my report?" in rows[1]["text"]
+    assert "| source | docs |" in rows[1]["text"]
+    assert 'print("keep code")' in rows[1]["text"]
+
+
+def test_markdown_rows_serialize_as_one_json_object_per_line():
+    rows = dataset_uploads.normalize_uploaded_dataset(
+        b"# Examples\n\n## One\nUser: A\nAssistant: B\n\n## Two\nUser: C\nAssistant: D",
+        "examples.md",
+        "md",
+    )
+
+    payload = dataset_uploads.normalized_rows_to_jsonl(rows).decode("utf-8")
+    lines = payload.splitlines()
+
+    assert len(lines) == 2
+    assert [json.loads(line)["chunk_index"] for line in lines] == [0, 1]
+
+
 def test_normalize_markdown_rejects_empty_text():
     with pytest.raises(HTTPException) as exc_info:
         dataset_uploads.normalize_uploaded_dataset(
@@ -596,6 +645,8 @@ async def test_upload_route_appends_context_note_and_persists(monkeypatch):
         normalized_format="jsonl",
         normalized_row_count=1,
         source_format="jsonl",
+        source="session-upload",
+        uploaded_at="2026-05-30T00:00:00Z",
         supports_training=True,
         size_bytes=14,
         format="jsonl",
@@ -688,6 +739,8 @@ async def test_upload_route_records_uploaded_dataset_metadata(monkeypatch):
         normalized_format="jsonl",
         normalized_row_count=1,
         source_format="md",
+        source="session-upload",
+        uploaded_at="2026-05-30T00:00:00Z",
         supports_training=True,
         size_bytes=27,
         format="md",
@@ -739,9 +792,13 @@ async def test_upload_route_records_uploaded_dataset_metadata(monkeypatch):
             "filename": "notes.md",
             "format": "md",
             "source_format": "md",
+            "source": "session-upload",
+            "uploaded_at": response.uploaded_at,
             "normalized_row_count": 1,
+            "normalized_format": "jsonl",
             "status": "ready",
             "supports_training": True,
+            "size_bytes": 27,
             "config_name": "upload_md123",
             "repo_id": "alice/ml-intern-s1-datasets",
             "repo_type": "dataset",
@@ -751,6 +808,7 @@ async def test_upload_route_records_uploaded_dataset_metadata(monkeypatch):
             "load_dataset_snippet": uploaded.load_dataset_snippet,
         }
     ]
+    assert response.uploaded_at
 
 
 @pytest.mark.asyncio

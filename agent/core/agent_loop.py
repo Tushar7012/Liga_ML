@@ -92,11 +92,26 @@ def _uploaded_dataset_instruction(session: Session) -> str | None:
     if not uploads:
         return None
     latest = uploads[-1]
+    required_fields = ("config_name", "repo_id", "normalized_row_count")
+    missing_fields = [
+        field for field in required_fields if latest.get(field) in {None, ""}
+    ]
+    supports_training = latest.get("supports_training", True)
     named = ", ".join(
         str(upload.get("filename"))
         for upload in uploads
         if isinstance(upload.get("filename"), str)
     )
+    incomplete_note = ""
+    if missing_fields or supports_training is False or latest.get("status") == "failed":
+        missing = (
+            ", ".join(missing_fields) if missing_fields else "training-ready status"
+        )
+        incomplete_note = (
+            " The uploaded dataset metadata is incomplete or not training-ready "
+            f"({missing}); explain the missing dataset requirements and ask for "
+            "the missing dataset details before launching training."
+        )
     return (
         "The user has uploaded data for this session. For fine-tuning or "
         "training requests, first inspect and use the uploaded normalized "
@@ -108,7 +123,9 @@ def _uploaded_dataset_instruction(session: Session) -> str | None:
         f"repo_id={latest.get('repo_id')}. "
         "Use the normalized dataset config for training. Do not ask for a "
         "local file path. Do not ask the user to upload again unless the "
-        "dataset load fails." + (f" Available uploads: {named}." if named else "")
+        "dataset load fails."
+        + incomplete_note
+        + (f" Available uploads: {named}." if named else "")
     )
 
 

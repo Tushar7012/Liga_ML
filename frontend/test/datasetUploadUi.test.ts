@@ -15,3 +15,13 @@ test('uploaded data section renders training metadata', () => {
   assert.match(chatInputSource, /normalized_row_count/);
   assert.match(chatInputSource, /config_name/);
 });
+
+test('uploaded data section covers empty, warning, and malformed metadata states', () => {
+  assert.match(chatInputSource, /No uploaded data yet/);
+  assert.match(chatInputSource, /Uploaded data is prioritized/);
+  assert.match(chatInputSource, /Needs attention/);
+  assert.match(chatInputSource, /Unknown file/);
+  assert.match(chatInputSource, /Unknown format/);
+  assert.match(chatInputSource, /Row count unavailable/);
+  assert.doesNotMatch(chatInputSource, /Kaggle-first/);
+});

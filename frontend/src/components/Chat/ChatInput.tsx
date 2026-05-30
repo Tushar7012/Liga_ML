@@ -178,6 +178,34 @@ const datasetRepoUrl = (repoId: string) => (
   `https://huggingface.co/datasets/${repoId.split('/').map(encodeURIComponent).join('/')}`
 );
 
+const datasetFilename = (dataset: UploadedDatasetInfo) => (
+  dataset.filename?.trim() || 'Unknown file'
+);
+
+const datasetFormatLabel = (dataset: UploadedDatasetInfo) => (
+  dataset.source_format || dataset.format
+    ? (dataset.source_format || dataset.format || '').toUpperCase()
+    : 'Unknown format'
+);
+
+const datasetRowLabel = (dataset: UploadedDatasetInfo) => {
+  if (typeof dataset.normalized_row_count !== 'number') return 'Row count unavailable';
+  const unit = dataset.source_format === 'md' ? 'chunks' : 'rows';
+  return `${dataset.normalized_row_count.toLocaleString()} normalized ${unit}`;
+};
+
+const datasetUploadedAtLabel = (dataset: UploadedDatasetInfo) => {
+  if (!dataset.uploaded_at) return 'Upload time unavailable';
+  const uploadedAt = new Date(dataset.uploaded_at);
+  if (Number.isNaN(uploadedAt.getTime())) return 'Upload time unavailable';
+  return `Uploaded ${uploadedAt.toLocaleString()}`;
+};
+
+const datasetReadinessLabel = (dataset: UploadedDatasetInfo) => {
+  const ready = (dataset.status ?? 'ready') === 'ready' && dataset.supports_training !== false;
+  return ready ? 'Ready for training' : 'Needs attention';
+};
+
 export default function ChatInput({ sessionId, initialModelPath, onSend, onStop, onDatasetUploaded, isProcessing = false, disabled = false, placeholder = 'Ask anything...' }: ChatInputProps) {
   const [input, setInput] = useState('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -809,60 +837,89 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
             </Alert>
           </Box>
         )}
-        {uploadedDatasets.length > 0 && (
-          <Box
-            aria-label="Uploaded Data"
+        <Box
+          aria-label="Uploaded Data"
+          sx={{
+            mt: 1,
+            p: 1,
+            border: '1px solid var(--divider)',
+            borderRadius: '12px',
+            bgcolor: 'rgba(255,255,255,0.04)',
+          }}
+        >
+          <Typography
+            variant="caption"
             sx={{
-              mt: 1,
-              p: 1,
-              border: '1px solid var(--divider)',
-              borderRadius: '12px',
-              bgcolor: 'rgba(255,255,255,0.04)',
+              display: 'block',
+              mb: 0.5,
+              color: 'var(--muted-text)',
+              fontWeight: 700,
+              letterSpacing: '0.05em',
+              textTransform: 'uppercase',
             }}
           >
-            <Typography
-              variant="caption"
-              sx={{
-                display: 'block',
-                mb: 0.75,
-                color: 'var(--muted-text)',
-                fontWeight: 700,
-                letterSpacing: '0.05em',
-                textTransform: 'uppercase',
-              }}
-            >
-              Uploaded Data
+            Uploaded Data
+          </Typography>
+          <Typography variant="caption" sx={{ display: 'block', mb: uploadedDatasets.length ? 0.75 : 0, color: 'var(--muted-text)' }}>
+            Uploaded data is prioritized for fine-tuning planning before external dataset suggestions.
+          </Typography>
+          {uploadedDatasets.length === 0 ? (
+            <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'var(--muted-text)' }}>
+              No uploaded data yet. Upload CSV, JSONL, JSON, Markdown, PDF, DOCX, or XLSX to prepare a normalized training JSONL dataset.
             </Typography>
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
-              {uploadedDatasets.map((dataset) => {
-                const ready = (dataset.status ?? 'ready') === 'ready' && dataset.supports_training;
-                const rowLabel = `${dataset.normalized_row_count.toLocaleString()} normalized ${dataset.source_format === 'md' ? 'chunks' : 'rows'}`;
+          ) : (
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(auto-fit, minmax(260px, 1fr))' }, gap: 0.75 }}>
+              {uploadedDatasets.map((dataset, index) => {
+                const ready = (dataset.status ?? 'ready') === 'ready' && dataset.supports_training !== false;
+                const repoUrl = dataset.repo_id ? datasetRepoUrl(dataset.repo_id) : undefined;
                 return (
-                  <Chip
-                    key={dataset.upload_id}
-                    size="small"
-                    label={`${dataset.filename} · ${dataset.source_format.toUpperCase()} · ${rowLabel} · ${ready ? 'Ready for training' : 'Failed'} · ${dataset.config_name}`}
-                    component="a"
-                    href={datasetRepoUrl(dataset.repo_id)}
-                    target="_blank"
-                    rel="noreferrer"
-                    clickable
+                  <Box
+                    key={dataset.upload_id ?? `${dataset.filename ?? 'dataset'}-${index}`}
+                    component={repoUrl ? 'a' : 'div'}
+                    href={repoUrl}
+                    target={repoUrl ? '_blank' : undefined}
+                    rel={repoUrl ? 'noreferrer' : undefined}
                     sx={{
-                      maxWidth: '100%',
-                      bgcolor: ready ? 'rgba(54, 211, 153, 0.12)' : 'rgba(248, 113, 113, 0.12)',
+                      minWidth: 0,
+                      p: 1,
+                      borderRadius: '10px',
+                      textDecoration: 'none',
+                      bgcolor: ready ? 'rgba(54, 211, 153, 0.09)' : 'rgba(248, 113, 113, 0.09)',
+                      border: `1px solid ${ready ? 'rgba(54, 211, 153, 0.32)' : 'rgba(248, 113, 113, 0.32)'}`,
                       color: 'var(--text)',
-                      border: `1px solid ${ready ? 'rgba(54, 211, 153, 0.35)' : 'rgba(248, 113, 113, 0.35)'}`,
-                      '& .MuiChip-label': {
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                      },
+                      cursor: repoUrl ? 'pointer' : 'default',
                     }}
-                  />
+                  >
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+                      <Typography variant="caption" sx={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {datasetFilename(dataset)}
+                      </Typography>
+                      <Chip
+                        size="small"
+                        label={datasetReadinessLabel(dataset)}
+                        sx={{
+                          height: 20,
+                          flexShrink: 0,
+                          bgcolor: ready ? 'rgba(54, 211, 153, 0.16)' : 'rgba(248, 113, 113, 0.16)',
+                          color: 'var(--text)',
+                        }}
+                      />
+                    </Box>
+                    <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'var(--muted-text)' }}>
+                      {datasetFormatLabel(dataset)} · {dataset.normalized_format ?? 'jsonl'} · {datasetRowLabel(dataset)}
+                    </Typography>
+                    <Typography variant="caption" sx={{ display: 'block', color: 'var(--muted-text)' }}>
+                      {datasetUploadedAtLabel(dataset)} · Source: {dataset.source ?? 'session-upload'}
+                    </Typography>
+                    <Typography variant="caption" sx={{ display: 'block', color: 'var(--muted-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      Config: {dataset.config_name ?? 'missing config'} · Repo: {dataset.repo_id ?? 'missing repo'}
+                    </Typography>
+                  </Box>
                 );
               })}
             </Box>
-          </Box>
-        )}
+          )}
+        </Box>
 
         {/* Model and training backend selectors */}
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mt: 1.5, gap: 1.5, flexWrap: 'wrap' }}>

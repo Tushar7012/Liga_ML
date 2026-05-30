@@ -107,9 +107,13 @@ class UploadedDatasetInfo(BaseModel):
     filename: str
     format: DatasetSourceFormat
     source_format: DatasetSourceFormat
+    source: str = "session-upload"
+    uploaded_at: str | None = None
     normalized_row_count: int
+    normalized_format: Literal["jsonl"] = "jsonl"
     status: Literal["ready", "failed"] = "ready"
     supports_training: bool = True
+    size_bytes: int | None = None
     config_name: str
     repo_id: str
     repo_type: Literal["dataset"] = "dataset"
@@ -170,6 +174,8 @@ class DatasetUploadResponse(BaseModel):
     normalized_format: Literal["jsonl"]
     normalized_row_count: int
     source_format: DatasetSourceFormat
+    source: str = "session-upload"
+    uploaded_at: str
     supports_training: bool
     size_bytes: int
     format: DatasetSourceFormat

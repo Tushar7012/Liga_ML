@@ -8,6 +8,7 @@ import os
 import re
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -52,6 +53,8 @@ class DatasetUpload:
     normalized_format: str
     normalized_row_count: int
     source_format: str
+    source: str
+    uploaded_at: str
     supports_training: bool
     size_bytes: int
     format: str
@@ -73,6 +76,8 @@ class DatasetUpload:
             "normalized_format": self.normalized_format,
             "normalized_row_count": self.normalized_row_count,
             "source_format": self.source_format,
+            "source": self.source,
+            "uploaded_at": self.uploaded_at,
             "supports_training": self.supports_training,
             "size_bytes": self.size_bytes,
             "format": self.format,
@@ -383,6 +388,9 @@ def _normalize_markdown(contents: bytes, filename: str) -> list[dict[str, Any]]:
         text = contents.decode("utf-8-sig")
     except UnicodeDecodeError:
         _bad_dataset("Markdown dataset must be UTF-8 encoded.")
+    section_rows = _markdown_section_rows(text, filename)
+    if section_rows:
+        return section_rows
     chunks = _chunk_text(text)
     if not chunks:
         _bad_dataset("Markdown dataset contains no usable text.")
@@ -395,6 +403,47 @@ def _normalize_markdown(contents: bytes, filename: str) -> list[dict[str, Any]]:
         }
         for index, chunk in enumerate(chunks)
     ]
+
+
+def _markdown_section_rows(text: str, filename: str) -> list[dict[str, Any]]:
+    """Split Markdown example collections by second-level headings."""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    heading_indexes = [
+        index for index, line in enumerate(lines) if re.match(r"^##\s+\S", line)
+    ]
+    if len(heading_indexes) < 2:
+        return []
+
+    preamble = "\n".join(lines[: heading_indexes[0]]).strip()
+    rows: list[dict[str, Any]] = []
+    for section_number, start in enumerate(heading_indexes):
+        end = (
+            heading_indexes[section_number + 1]
+            if section_number + 1 < len(heading_indexes)
+            else len(lines)
+        )
+        section = "\n".join(lines[start:end]).strip()
+        block = f"{preamble}\n\n{section}" if preamble else section
+        block = re.sub(r"\n{3,}", "\n\n", block).strip()
+        if not re.search(r"\w", block):
+            continue
+        if len(block) > 2000:
+            section_chunks = _chunk_text(block)
+        else:
+            section_chunks = [block]
+        for chunk in section_chunks:
+            rows.append(
+                {
+                    "source_format": "md",
+                    "source_file": filename,
+                    "chunk_index": len(rows),
+                    "section_index": section_number,
+                    "text": chunk,
+                }
+            )
+    if not rows:
+        _bad_dataset("Markdown dataset contains no usable text.")
+    return rows
 
 
 def _normalize_pdf(contents: bytes, filename: str) -> list[dict[str, Any]]:
@@ -725,9 +774,13 @@ def dataset_session_metadata(upload: DatasetUpload) -> dict[str, str | int | boo
         "filename": upload.filename,
         "format": upload.format,
         "source_format": upload.source_format,
+        "source": upload.source,
+        "uploaded_at": upload.uploaded_at,
         "normalized_row_count": upload.normalized_row_count,
+        "normalized_format": upload.normalized_format,
         "status": "ready" if upload.supports_training else "failed",
         "supports_training": upload.supports_training,
+        "size_bytes": upload.size_bytes,
         "config_name": upload.config_name,
         "repo_id": upload.repo_id,
         "repo_type": upload.repo_type,
@@ -755,6 +808,7 @@ async def push_dataset_upload_to_hub(
     path_in_repo = normalized_path_in_repo
     hub_url = dataset_hub_url(repo_id, normalized_path_in_repo)
     snippet = load_dataset_snippet(repo_id, config_name)
+    uploaded_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     api = HfApi(token=hf_token)
 
     await asyncio.to_thread(
@@ -832,6 +886,8 @@ async def push_dataset_upload_to_hub(
         normalized_format=NORMALIZED_DATASET_FORMAT,
         normalized_row_count=len(normalized_rows),
         source_format=dataset_format,
+        source="session-upload",
+        uploaded_at=uploaded_at,
         supports_training=True,
         size_bytes=size,
         format=dataset_format,
