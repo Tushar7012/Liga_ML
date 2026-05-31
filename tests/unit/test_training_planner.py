@@ -63,7 +63,7 @@ def test_sensitive_medical_domain_recommends_cloud_private():
 
     assert plan.output_policy == "cloud-private"
     assert any("sensitive" in warning.lower() for warning in plan.privacy_warnings)
-    assert any("GCS only" in warning for warning in plan.privacy_warnings)
+    assert any("Google Cloud Storage" in warning for warning in plan.privacy_warnings)
 
 
 def test_sensitive_finance_domain_recommends_cloud_private():
@@ -76,7 +76,22 @@ def test_sensitive_finance_domain_recommends_cloud_private():
     )
 
     assert plan.output_policy == "cloud-private"
-    assert any("S3 only" in warning for warning in plan.privacy_warnings)
+    assert any("Amazon S3" in warning for warning in plan.privacy_warnings)
+
+
+def test_sensitive_hf_jobs_warning_is_privacy_aware():
+    plan = recommend_training_plan(
+        provider="hf-jobs",
+        domain="legal",
+        training_goal="production",
+        dataset_summary={"rows": 1_000},
+        privacy_level="unknown",
+    )
+
+    warnings = " ".join(plan.privacy_warnings)
+    assert plan.output_policy == "cloud-private"
+    assert "private Hub" in warnings
+    assert "job artifact" in warnings
 
 
 def test_general_customer_support_can_use_balanced_cloud_and_hub_policy():
@@ -90,6 +105,21 @@ def test_general_customer_support_can_use_balanced_cloud_and_hub_policy():
 
     assert plan.output_policy in {"cloud-and-hf-hub", "hf-hub"}
     assert not plan.privacy_warnings
+
+
+def test_privacy_warning_has_no_contradictory_policy_text():
+    plan = recommend_training_plan(
+        provider="gcp-vertex",
+        domain="finance",
+        training_goal="production",
+        dataset_summary={"rows": 2_000},
+        privacy_level="unknown",
+    )
+
+    warnings = " ".join(plan.privacy_warnings)
+    assert "Google Cloud Storage" in warnings
+    assert "Amazon S3" not in warnings
+    assert "Hugging Face job/model artifacts" not in warnings
 
 
 def test_provider_specific_hardware_shapes_are_returned():

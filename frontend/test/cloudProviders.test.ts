@@ -9,6 +9,7 @@ import {
   storageDestinationLabel,
   trainingGoalLabel,
 } from '../src/lib/gcloud-preflight.js';
+import { outputPolicyLabel as sharedOutputPolicyLabel } from '../src/lib/output-policy.js';
 import {
   clearExplicitToolApprovalsForTesting,
   consumeExplicitApprovalDecision,
@@ -71,6 +72,10 @@ test('formats storage destination for Vertex panel summaries', () => {
   assert.equal(storageDestinationLabel('cloud-private'), 'Google Cloud Storage only');
   assert.equal(storageDestinationLabel('hf-hub'), 'Hugging Face Hub only');
   assert.equal(storageDestinationLabel('cloud-and-hf-hub'), 'Google Cloud Storage and Hugging Face Hub');
+  assert.equal(
+    sharedOutputPolicyLabel('gcp-vertex', 'cloud-and-hf-hub'),
+    'Both Google Cloud Storage and Hugging Face Hub',
+  );
 });
 
 test('requires an explicit user approval before consuming a tool approval decision', () => {

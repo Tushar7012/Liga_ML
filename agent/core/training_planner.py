@@ -10,6 +10,14 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from agent.core.output_policy import (
+    cloud_storage_label,
+    default_output_policy_for_domain,
+    is_sensitive_domain,
+    output_policy_label,
+    privacy_warning_for_policy,
+)
+
 
 SUPPORTED_PROVIDERS = {"hf-jobs", "gcp-vertex", "aws-sagemaker"}
 SUPPORTED_TASK_TYPES = {"sft"}
@@ -22,22 +30,6 @@ PRODUCTION_MODELS = {
     "low": "Qwen/Qwen2.5-3B-Instruct",
     "balanced": "meta-llama/Llama-3.2-3B-Instruct",
     "performance": "mistralai/Mistral-7B-Instruct-v0.3",
-}
-
-SENSITIVE_DOMAIN_KEYWORDS = {
-    "medical",
-    "healthcare",
-    "health",
-    "finance",
-    "financial",
-    "banking",
-    "bank",
-    "insurance",
-    "legal",
-    "government",
-    "gov",
-    "internal",
-    "internal company data",
 }
 
 KNOWN_DOMAIN_FAMILIES = {
@@ -120,13 +112,6 @@ def normalize_privacy_level(privacy_level: str | None) -> str:
 def normalize_budget_preference(budget_preference: str | None) -> str:
     value = (budget_preference or "balanced").strip().lower()
     return value if value in VALID_BUDGET_PREFERENCES else "balanced"
-
-
-def is_sensitive_domain(domain: str | None) -> bool:
-    normalized = normalize_domain(domain)
-    tokens = normalized.replace("_", " ").split()
-    searchable = {normalized, normalized.replace("_", " "), *tokens}
-    return bool(searchable & SENSITIVE_DOMAIN_KEYWORDS)
 
 
 def detect_privacy_level(domain: str | None, privacy_level: str | None = None) -> str:
@@ -227,22 +212,21 @@ def _recommended_hardware(provider: str, goal: str) -> dict[str, Any]:
     return dict(provider_catalog[goal_key])
 
 
-def _privacy_notes(provider: str, privacy: str) -> tuple[str, list[str]]:
+def _privacy_notes(provider: str, domain: str, privacy: str) -> tuple[str, list[str]]:
+    output_policy = default_output_policy_for_domain(domain, provider)
     if privacy != "sensitive":
-        return "cloud-and-hf-hub", []
+        return output_policy, []
 
     warnings = [
         "Sensitive or regulated data detected; prefer private cloud storage and avoid pushing to external registries unless explicitly approved."
     ]
-    if provider == "gcp-vertex":
-        warnings.append("For GCloud, cloud-private means GCS only.")
-    elif provider == "aws-sagemaker":
-        warnings.append("For AWS, cloud-private means S3 only.")
-    elif provider == "hf-jobs":
-        warnings.append(
-            "For HF Jobs, configure Hub repository/output privacy carefully because cloud-private may not be fully isolated from Hub storage."
-        )
-    return "cloud-private", warnings
+    warnings.append(
+        f"For {provider}, cloud-private means {output_policy_label(provider, output_policy)} "
+        f"({cloud_storage_label(provider)})."
+    )
+    if hf_warning := privacy_warning_for_policy(provider, output_policy):
+        warnings.append(hf_warning)
+    return output_policy, warnings
 
 
 def _model_risks(model_id: str, goal: str) -> list[str]:
@@ -291,7 +275,11 @@ def recommend_training_plan(
     )
 
     privacy = detect_privacy_level(normalized_domain, privacy_level)
-    output_policy, privacy_warnings = _privacy_notes(normalized_provider, privacy)
+    output_policy, privacy_warnings = _privacy_notes(
+        normalized_provider,
+        normalized_domain,
+        privacy,
+    )
 
     production_model = PRODUCTION_MODELS[budget]
     recommended_model = SMOKE_TEST_MODEL if goal == "smoke-test" else production_model

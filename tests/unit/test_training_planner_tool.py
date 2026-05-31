@@ -30,6 +30,7 @@ async def test_training_planner_recommend_operation_returns_markdown_plan():
     assert "**Recommended model:**" in output
     assert "**Recommended hardware:**" in output
     assert "**Output policy:** cloud-private" in output
+    assert "Google Cloud Storage" in output
     assert "Risks" in output
 
 
@@ -49,6 +50,41 @@ async def test_training_planner_no_dataset_available_guides_discovery_first():
     assert "dataset discovery is required" in output.lower()
     assert "dataset_discovery" in output
     assert "do not launch" in output.lower()
+
+
+@pytest.mark.asyncio
+async def test_training_planner_tool_formats_aws_cloud_private_storage():
+    output, ok = await training_planner_handler(
+        {
+            "operation": "recommend",
+            "provider": "aws-sagemaker",
+            "domain": "medical",
+            "training_goal": "production",
+            "dataset_summary": {"rows": 1_500},
+        }
+    )
+
+    assert ok is True
+    assert "**Output policy:** cloud-private" in output
+    assert "Amazon S3" in output
+
+
+@pytest.mark.asyncio
+async def test_training_planner_tool_formats_hf_jobs_privacy_warning():
+    output, ok = await training_planner_handler(
+        {
+            "operation": "recommend",
+            "provider": "hf-jobs",
+            "domain": "legal",
+            "training_goal": "production",
+            "dataset_summary": {"rows": 1_500},
+        }
+    )
+
+    assert ok is True
+    assert "**Output policy:** cloud-private" in output
+    assert "private Hub" in output
+    assert "job artifact" in output
 
 
 @pytest.mark.asyncio

@@ -23,3 +23,23 @@ def test_prompt_uses_dataset_discovery_for_no_upload_training():
     assert "dataset_discovery" in prompt
     assert "no uploaded dataset exists" in prompt
     assert "ask the user to approve/select" in prompt
+
+
+def test_prompt_includes_shared_output_policy_contract():
+    prompt = Path("agent/prompts/system_prompt_v3.yaml").read_text()
+
+    assert "shared output policy contract" in prompt
+    assert "cloud-private" in prompt
+    assert "provider-native private cloud/job storage" in prompt
+    assert "hf-hub" in prompt
+    assert "cloud-and-hf-hub" in prompt
+
+
+def test_prompt_guides_sensitive_domains_to_cloud_private():
+    prompt = Path("agent/prompts/system_prompt_v3.yaml").read_text()
+
+    assert "Sensitive domains" in prompt
+    assert "recommend `cloud-private`" in prompt
+    assert "AWS `cloud-private` means S3" in prompt
+    assert "GCloud `cloud-private` means GCS" in prompt
+    assert "HF Jobs privacy depends on private Hub/job artifact settings" in prompt
