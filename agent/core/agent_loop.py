@@ -442,6 +442,39 @@ async def _approval_decision(
             billable=estimate.billable,
         )
 
+    if _is_immediate_hf_job_run(tool_name, tool_args):
+        estimate = await estimate_tool_cost(tool_name, tool_args, session=session)
+        remaining = _remaining_budget_after_reservations(session, reserved_spend_usd)
+        if not session_yolo_enabled:
+            return ApprovalDecision(
+                requires_approval=True,
+                auto_approval_blocked=yolo_enabled,
+                block_reason=(
+                    "HF Jobs run requires manual approval unless session "
+                    "auto-approval with a cost cap is enabled."
+                ),
+                estimated_cost_usd=estimate.estimated_cost_usd,
+                remaining_cap_usd=remaining,
+                billable=estimate.billable,
+            )
+        reason = _budget_block_reason(estimate, remaining_cap_usd=remaining)
+        if reason:
+            return ApprovalDecision(
+                requires_approval=True,
+                auto_approval_blocked=True,
+                block_reason=reason,
+                estimated_cost_usd=estimate.estimated_cost_usd,
+                remaining_cap_usd=remaining,
+                billable=estimate.billable,
+            )
+        return ApprovalDecision(
+            requires_approval=False,
+            auto_approved=base_requires_approval,
+            estimated_cost_usd=estimate.estimated_cost_usd,
+            remaining_cap_usd=remaining,
+            billable=estimate.billable,
+        )
+
     # Cost caps are a session-scoped web policy. Legacy config.yolo_mode
     # remains uncapped for CLI/headless, except for scheduled jobs above.
     if yolo_enabled and budgeted_target and session_yolo_enabled:
@@ -489,6 +522,39 @@ def _record_estimated_spend(session: Session, decision: ApprovalDecision) -> Non
             + float(decision.estimated_cost_usd),
             4,
         )
+
+
+def _approval_metadata(
+    session: Session, tool_name: str, tool_args: dict[str, Any]
+) -> dict[str, Any] | None:
+    if tool_name not in {"hf_jobs", "gcp_vertex_jobs"}:
+        return None
+    metadata: dict[str, Any] = {
+        "provider": "hf-jobs" if tool_name == "hf_jobs" else "gcp-vertex",
+        "training_goal": getattr(session, "training_goal", None),
+        "output_policy": getattr(session, "output_policy", None),
+    }
+    for source_key, target_key in (
+        ("model_name", "model"),
+        ("model", "model"),
+        ("hub_model_id", "hub_model_id"),
+        ("dataset_name", "dataset"),
+        ("dataset_repo", "dataset"),
+        ("dataset_repo_id", "dataset"),
+        ("dataset_config", "dataset_config"),
+        ("dataset_split", "dataset_split"),
+        ("hardware_flavor", "hardware"),
+        ("hardware", "hardware"),
+    ):
+        value = tool_args.get(source_key)
+        if value not in {None, ""} and target_key not in metadata:
+            metadata[target_key] = value
+    upload = _latest_uploaded_dataset(session)
+    if upload:
+        metadata.setdefault("dataset", upload.get("repo_id"))
+        metadata.setdefault("dataset_config", upload.get("config_name"))
+        metadata.setdefault("dataset_rows", upload.get("normalized_row_count"))
+    return {key: value for key, value in metadata.items() if value not in {None, ""}}
 
 
 async def _record_manual_approved_spend_if_needed(
@@ -813,6 +879,71 @@ def _empty_llm_response_message(*, model_name: str, finish_reason: str | None) -
     )
 
 
+_HF_TRAINING_INTENT_TERMS = (
+    "train",
+    "training",
+    "fine-tune",
+    "finetune",
+    "fine tune",
+    "sft",
+    "model adaptation",
+)
+
+
+def _last_tool_name(session: Session) -> str | None:
+    for item in reversed(session.context_manager.items):
+        if getattr(item, "role", None) == "tool":
+            name = getattr(item, "name", None)
+            return str(name) if name else None
+    return None
+
+
+def _latest_uploaded_dataset(session: Session) -> dict[str, Any] | None:
+    uploads = [
+        upload
+        for upload in (getattr(session, "uploaded_datasets", []) or [])
+        if isinstance(upload, dict)
+    ]
+    return uploads[-1] if uploads else None
+
+
+def _has_training_intent(text: str | None) -> bool:
+    haystack = (text or "").lower()
+    return any(term in haystack for term in _HF_TRAINING_INTENT_TERMS)
+
+
+def _should_emit_hf_planner_fallback(session: Session, text: str | None) -> bool:
+    if getattr(session, "cloud_provider", "hf-jobs") != "hf-jobs":
+        return False
+    if _last_tool_name(session) != "training_planner":
+        return False
+    if not _has_training_intent(text):
+        return False
+    return _latest_uploaded_dataset(session) is not None
+
+
+def _hf_planner_fallback_message(session: Session) -> str:
+    upload = _latest_uploaded_dataset(session) or {}
+    dataset_parts = []
+    if upload.get("repo_id"):
+        dataset_parts.append(f"repo `{upload.get('repo_id')}`")
+    if upload.get("config_name"):
+        dataset_parts.append(f"config `{upload.get('config_name')}`")
+    if upload.get("normalized_row_count") is not None:
+        dataset_parts.append(f"{upload.get('normalized_row_count')} normalized rows")
+    dataset = ", ".join(dataset_parts) or "the uploaded normalized dataset"
+    return (
+        "I prepared the Hugging Face training plan, but the model stopped before "
+        "launching the Hugging Face Jobs preflight. I can continue with the planned "
+        f"Hugging Face fine-tuning workflow using {dataset}.\n\n"
+        f"Preflight context: provider `hf-jobs`, training goal "
+        f"`{getattr(session, 'training_goal', 'agent-decide')}`, output policy "
+        f"`{getattr(session, 'output_policy', 'cloud-and-hf-hub')}`. The next "
+        "approval-gated step is `hf_jobs`; before any job launches, I will show "
+        "the `hf_jobs` approval card and wait for explicit approval."
+    )
+
+
 async def _emit_visible_error(
     session: Session,
     message: str,
@@ -836,6 +967,14 @@ async def _emit_visible_error(
                 "model": model_name or session.config.model_name,
             },
         )
+    )
+
+
+async def _emit_visible_assistant_message(session: Session, message: str) -> None:
+    assistant_msg = Message(role="assistant", content=message)
+    session.context_manager.add_message(assistant_msg)
+    await session.send_event(
+        Event(event_type="assistant_message", data={"content": message})
     )
 
 
@@ -1594,6 +1733,11 @@ class Handlers:
                 # If no tool calls, add assistant message and we're done
                 if not tool_calls:
                     if not content:
+                        if _should_emit_hf_planner_fallback(session, text):
+                            fallback_msg = _hf_planner_fallback_message(session)
+                            await _emit_visible_assistant_message(session, fallback_msg)
+                            final_response = fallback_msg
+                            break
                         error_msg = _empty_llm_response_message(
                             model_name=session.config.model_name,
                             finish_reason=finish_reason,
@@ -1913,6 +2057,9 @@ class Handlers:
                             "arguments": tool_args,
                             "tool_call_id": tc.id,
                         }
+                        metadata = _approval_metadata(session, tool_name, tool_args)
+                        if metadata:
+                            tool_payload["metadata"] = metadata
                         if decision.auto_approval_blocked:
                             tool_payload.update(
                                 {
@@ -2327,21 +2474,20 @@ async def process_submission(session: Session, submission) -> bool:
         training_goal = op.data.get("training_goal") if op.data else None
         output_policy = op.data.get("output_policy") if op.data else None
         if cloud_provider in {"hf-jobs", "gcp-vertex"}:
+            session.cloud_provider = cloud_provider
+            if training_goal in {"smoke-test", "production", "agent-decide"}:
+                session.training_goal = training_goal
+            else:
+                training_goal = getattr(session, "training_goal", "agent-decide")
+            if output_policy in {
+                "cloud-private",
+                "hf-hub",
+                "cloud-and-hf-hub",
+            }:
+                session.output_policy = output_policy
+            else:
+                output_policy = getattr(session, "output_policy", "cloud-and-hf-hub")
             if cloud_provider == "gcp-vertex":
-                if training_goal in {"smoke-test", "production", "agent-decide"}:
-                    session.training_goal = training_goal
-                else:
-                    training_goal = getattr(session, "training_goal", "agent-decide")
-                if output_policy in {
-                    "cloud-private",
-                    "hf-hub",
-                    "cloud-and-hf-hub",
-                }:
-                    session.output_policy = output_policy
-                else:
-                    output_policy = getattr(
-                        session, "output_policy", "cloud-and-hf-hub"
-                    )
                 provider_instruction = (
                     "User selected Google Cloud Vertex AI training backend. "
                     "Use gcp_vertex_jobs for fine-tuning/training. Use uploaded "
@@ -2366,7 +2512,15 @@ async def process_submission(session: Session, submission) -> bool:
                     "model adaptation, cloud compute, or model training job "
                     "requests, prefer hf_jobs unless the user explicitly asks "
                     "for another backend. Use uploaded dataset context from this "
-                    "session when one is available."
+                    "session when one is available. Before launch, respect "
+                    f"training_goal={training_goal} and output_policy={output_policy}. "
+                    "After a training_planner recommendation, continue to a "
+                    "Hugging Face Jobs preflight and the approval-gated hf_jobs "
+                    "step; do not stop after planning unless a real clarification "
+                    "is required. hf_jobs run operations are approval-gated and "
+                    "billable; do not launch them without approval. Do not route "
+                    "to gcp_vertex_jobs or aws_sagemaker_jobs unless the user "
+                    "changes provider. Do not use Kaggle."
                 )
             session.context_manager.add_message(
                 Message(

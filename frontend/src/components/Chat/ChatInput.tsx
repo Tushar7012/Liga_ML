@@ -977,7 +977,7 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
             <ArrowDropDownIcon sx={{ fontSize: '14px', color: 'var(--muted-text)' }} />
           </Box>
 
-          {selectedCloudProvider === 'gcp-vertex' && (
+          {(selectedCloudProvider === 'gcp-vertex' || selectedCloudProvider === 'hf-jobs') && (
             <>
               <Box
                 onClick={(event) => setTrainingGoalAnchorEl(event.currentTarget)}
@@ -1016,7 +1016,7 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
                   storage
                 </Typography>
                 <Typography variant="caption" sx={{ fontSize: '10px', color: 'var(--text)', fontWeight: 600, letterSpacing: '0.02em' }}>
-                  {outputPolicyLabel(selectedOutputPolicy)}
+                  {outputPolicyLabel(selectedOutputPolicy, selectedCloudProvider)}
                 </Typography>
                 <ArrowDropDownIcon sx={{ fontSize: '14px', color: 'var(--muted-text)' }} />
               </Box>
@@ -1143,7 +1143,7 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
               onClick={() => handleSelectOutputPolicy(option.value)}
               selected={selectedOutputPolicy === option.value}
             >
-              <ListItemText primary={option.label} />
+              <ListItemText primary={outputPolicyLabel(option.value, selectedCloudProvider)} />
             </MenuItem>
           ))}
         </Menu>

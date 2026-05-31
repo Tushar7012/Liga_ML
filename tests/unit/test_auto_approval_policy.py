@@ -115,6 +115,63 @@ async def test_immediate_hf_job_under_cap_auto_runs(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_immediate_hf_job_global_yolo_still_requires_manual_approval(monkeypatch):
+    async def fake_estimate(*args, **kwargs):
+        return CostEstimate(estimated_cost_usd=2.0, billable=True)
+
+    monkeypatch.setattr(agent_loop, "estimate_tool_cost", fake_estimate)
+    session = _session(enabled=False, cap=None, spent=0.0)
+    session.config.yolo_mode = True
+
+    decision = await agent_loop._approval_decision(
+        "hf_jobs",
+        {"operation": "run", "hardware_flavor": "a10g-large", "timeout": "1h"},
+        session,
+    )
+
+    assert decision.requires_approval is True
+    assert decision.auto_approval_blocked is True
+    assert decision.auto_approved is False
+    assert decision.estimated_cost_usd == 2.0
+    assert "manual approval" in decision.block_reason
+
+
+def test_hf_jobs_approval_metadata_includes_provider_model_and_dataset():
+    session = SimpleNamespace(
+        training_goal="production",
+        output_policy="hf-hub",
+        uploaded_datasets=[
+            {
+                "repo_id": "owner/uploaded-dataset",
+                "config_name": "normalized",
+                "normalized_row_count": 42,
+            }
+        ],
+    )
+
+    metadata = agent_loop._approval_metadata(
+        session,
+        "hf_jobs",
+        {
+            "operation": "run",
+            "model_name": "Qwen/Qwen2.5-1.5B-Instruct",
+            "hardware_flavor": "t4-small",
+        },
+    )
+
+    assert metadata == {
+        "provider": "hf-jobs",
+        "training_goal": "production",
+        "output_policy": "hf-hub",
+        "model": "Qwen/Qwen2.5-1.5B-Instruct",
+        "hardware": "t4-small",
+        "dataset": "owner/uploaded-dataset",
+        "dataset_config": "normalized",
+        "dataset_rows": 42,
+    }
+
+
+@pytest.mark.asyncio
 async def test_gcp_vertex_job_under_cap_auto_runs_when_cost_is_known(monkeypatch):
     async def fake_estimate(*args, **kwargs):
         return CostEstimate(estimated_cost_usd=1.5, billable=True)

@@ -963,9 +963,21 @@ async def chat_sse(
     # Submit the operation
     text = body.get("text")
     approvals = body.get("approvals")
-    cloud_provider = _cloud_provider_or_default(body.get("cloud_provider"))
-    training_goal = _training_goal_or_default(body.get("training_goal"))
-    output_policy = _output_policy_or_default(body.get("output_policy"))
+    cloud_provider = (
+        _cloud_provider_or_default(body.get("cloud_provider"))
+        if "cloud_provider" in body
+        else None
+    )
+    training_goal = (
+        _training_goal_or_default(body.get("training_goal"))
+        if "training_goal" in body
+        else None
+    )
+    output_policy = (
+        _output_policy_or_default(body.get("output_policy"))
+        if "output_policy" in body
+        else None
+    )
 
     # Gate user-message sends against the daily premium-model quota. Approvals are
     # continuations of an in-progress turn — the session was already charged

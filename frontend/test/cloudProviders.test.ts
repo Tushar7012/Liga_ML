@@ -55,7 +55,7 @@ test('builds snake_case chat request metadata without duplicating fields', () =>
   );
 });
 
-test('omits GCloud-only fields for non-GCloud providers', () => {
+test('includes selected training metadata for Hugging Face Jobs submits', () => {
   assert.deepEqual(
     buildGcloudChatRequestMetadata({
       cloudProvider: 'hf-jobs',
@@ -64,8 +64,16 @@ test('omits GCloud-only fields for non-GCloud providers', () => {
     }),
     {
       cloud_provider: 'hf-jobs',
+      training_goal: 'production',
+      output_policy: 'hf-hub',
     },
   );
+});
+
+test('formats Hugging Face Jobs output policy labels', () => {
+  assert.equal(outputPolicyLabel('cloud-private', 'hf-jobs'), 'Private Hugging Face job/model artifacts');
+  assert.equal(outputPolicyLabel('hf-hub', 'hf-jobs'), 'Hugging Face Hub');
+  assert.equal(outputPolicyLabel('cloud-and-hf-hub', 'hf-jobs'), 'Hugging Face Hub and job artifacts');
 });
 
 test('formats storage destination for Vertex panel summaries', () => {

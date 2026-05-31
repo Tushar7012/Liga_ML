@@ -551,9 +551,17 @@ class SessionManager:
                     )
                     or 0.0
                 ),
-                cloud_provider=agent_session.cloud_provider,
-                training_goal=agent_session.training_goal,
-                output_policy=agent_session.output_policy,
+                cloud_provider=getattr(
+                    agent_session.session,
+                    "cloud_provider",
+                    agent_session.cloud_provider,
+                ),
+                training_goal=getattr(
+                    agent_session.session, "training_goal", agent_session.training_goal
+                ),
+                output_policy=getattr(
+                    agent_session.session, "output_policy", agent_session.output_policy
+                ),
                 uploaded_datasets=self._serialize_uploaded_datasets(
                     agent_session.session
                 ),

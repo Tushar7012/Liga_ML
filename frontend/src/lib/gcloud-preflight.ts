@@ -33,13 +33,19 @@ export function trainingGoalLabel(value: TrainingGoal | undefined): string {
     ?? trainingGoalLabel(DEFAULT_TRAINING_GOAL);
 }
 
-export function outputPolicyLabel(value: OutputPolicy | undefined): string {
-  return OUTPUT_POLICY_OPTIONS.find((option) => option.value === value)?.label
-    ?? outputPolicyLabel(DEFAULT_OUTPUT_POLICY);
+export function outputPolicyLabel(
+  value: OutputPolicy | undefined,
+  provider: CloudProviderId = 'gcp-vertex',
+): string {
+  const policy = value ?? DEFAULT_OUTPUT_POLICY;
+  return sharedOutputPolicyLabel(provider, policy);
 }
 
-export function storageDestinationLabel(value: OutputPolicy | undefined): string {
-  return sharedStorageDestinationLabel('gcp-vertex', value ?? DEFAULT_OUTPUT_POLICY);
+export function storageDestinationLabel(
+  value: OutputPolicy | undefined,
+  provider: CloudProviderId = 'gcp-vertex',
+): string {
+  return sharedStorageDestinationLabel(provider, value ?? DEFAULT_OUTPUT_POLICY);
 }
 
 export function buildGcloudChatRequestMetadata({
@@ -55,9 +61,6 @@ export function buildGcloudChatRequestMetadata({
   training_goal?: TrainingGoal;
   output_policy?: OutputPolicy;
 } {
-  if (cloudProvider !== 'gcp-vertex') {
-    return { cloud_provider: cloudProvider };
-  }
   return {
     cloud_provider: cloudProvider,
     training_goal: trainingGoal ?? DEFAULT_TRAINING_GOAL,

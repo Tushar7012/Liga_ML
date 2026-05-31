@@ -43,3 +43,13 @@ def test_prompt_guides_sensitive_domains_to_cloud_private():
     assert "AWS `cloud-private` means S3" in prompt
     assert "GCloud `cloud-private` means GCS" in prompt
     assert "HF Jobs privacy depends on private Hub/job artifact settings" in prompt
+
+
+def test_prompt_continues_hf_jobs_after_training_planner():
+    prompt = Path("agent/prompts/system_prompt_v3.yaml").read_text()
+
+    assert "cloud_provider=hf-jobs" in prompt
+    assert "After the plan is prepared" in prompt
+    assert "continue to a Hugging Face Jobs preflight" in prompt
+    assert "Use the `hf_jobs` backend" in prompt
+    assert "Do not route to `gcp_vertex_jobs` or `aws_sagemaker_jobs`" in prompt
