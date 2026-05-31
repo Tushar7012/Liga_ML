@@ -24,6 +24,7 @@ import { logger } from '@/utils/logger';
 import { appendTrainingResultSummary, buildVertexStateMarkdown, createVertexRunPanel } from '@/lib/vertex-job-panel';
 import { createTrainingPlannerPanel } from '@/lib/training-planner-panel';
 import { createDatasetDiscoveryPanel } from '@/lib/dataset-discovery-panel';
+import { shouldMarkModelUnavailable, normalizeLlmErrorType } from '@/lib/llm-error-recovery';
 import type { ToolStateChangeEventData } from '@/types/events';
 
 interface UseAgentChatOptions {
@@ -69,7 +70,7 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
 
-  const { setNeedsAttention, updateSessionYolo } = useSessionStore();
+  const { setNeedsAttention, updateSessionYolo, markSessionModelUnavailable } = useSessionStore();
 
   // Helper: update this session's state (mirrors to globals if active)
   const updateSession = useAgentStore.getState().updateSession;
@@ -91,8 +92,36 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
           useAgentStore.getState().setConnected(false);
         }
       },
-      onError: (error: string) => {
+      onRequestStart: (requestId: string) => {
+        useAgentStore.getState().clearLlmErrorForNewRequest(sessionId, requestId);
+      },
+      onRequestSuccess: (requestId: string) => {
+        useAgentStore.getState().clearLlmErrorForSuccessfulRequest(sessionId, requestId);
+      },
+      onError: (error: string, data?: Record<string, unknown>) => {
         updateSession(sessionId, { isProcessing: false });
+        const errorType = typeof data?.error_type === 'string' ? data.error_type : null;
+        const model = typeof data?.model === 'string' ? data.model : null;
+        if (errorType || model) {
+          const record = useAgentStore.getState().reportLlmHealthError({
+            error,
+            errorType,
+            model,
+            provider: typeof data?.provider === 'string' ? data.provider : null,
+            sessionId: typeof data?.session_id === 'string' ? data.session_id : sessionId,
+            requestId: typeof data?.request_id === 'string' ? data.request_id : null,
+            turnId: typeof data?.turn_id === 'string' || typeof data?.turn_id === 'number' ? data.turn_id : null,
+            timestamp: typeof data?.timestamp === 'string' ? data.timestamp : undefined,
+          });
+          if (record.model && shouldMarkModelUnavailable(normalizeLlmErrorType(record.errorType))) {
+            markSessionModelUnavailable(sessionId, record.model, {
+              model: record.model,
+              errorType: record.errorType,
+              message: record.message,
+              timestamp: record.timestamp,
+            });
+          }
+        }
         callbacksRef.current.onError?.(error);
       },
       onProcessing: () => {

@@ -198,5 +198,5 @@ class LLMHealthResponse(BaseModel):
     model: str
     error: str | None = None
     error_type: str | None = (
-        None  # "auth" | "credits" | "rate_limit" | "network" | "unknown"
+        None  # "quota" | "billing" | "auth" | "rate_limit" | "network" | "empty_response" | "unknown"
     )

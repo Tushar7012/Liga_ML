@@ -40,6 +40,13 @@ export interface UploadedDatasetInfo {
   load_dataset_snippet?: string;
 }
 
+export interface UnavailableModelInfo {
+  model: string;
+  errorType: 'quota' | 'billing' | 'auth' | 'rate_limit' | 'network' | 'empty_response' | 'unknown';
+  message: string;
+  timestamp: string;
+}
+
 export interface DatasetUploadResponse extends UploadedDatasetInfo {
   session_id: string;
   private: true;
@@ -70,6 +77,7 @@ export interface SessionMeta {
   autoApprovalEstimatedSpendUsd?: number;
   autoApprovalRemainingUsd?: number | null;
   uploadedDatasets?: UploadedDatasetInfo[];
+  unavailableModels?: Record<string, UnavailableModelInfo>;
 }
 
 export interface ToolApproval {

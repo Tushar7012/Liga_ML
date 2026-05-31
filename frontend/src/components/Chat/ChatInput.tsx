@@ -41,6 +41,7 @@ import {
   isClaudePath,
   isPremiumPath,
 } from '@/utils/model';
+import { clearLlmErrorOnModelChange, isModelUnavailable } from '@/lib/llm-error-recovery';
 import type {
   CloudProviderId,
   DatasetUploadResponse,
@@ -210,6 +211,7 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
   const [input, setInput] = useState('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const modelButtonRef = useRef<HTMLDivElement>(null);
   const [modelOptions, setModelOptions] = useState<ModelOption[]>(DEFAULT_MODEL_OPTIONS);
   const modelOptionsRef = useRef<ModelOption[]>(DEFAULT_MODEL_OPTIONS);
   const sessionIdRef = useRef<string | undefined>(sessionId);
@@ -230,6 +232,8 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
   const setClaudeQuotaExhausted = useAgentStore((s) => s.setClaudeQuotaExhausted);
   const jobsUpgradeRequired = useAgentStore((s) => s.jobsUpgradeRequired);
   const setJobsUpgradeRequired = useAgentStore((s) => s.setJobsUpgradeRequired);
+  const llmHealthError = useAgentStore((s) => s.llmHealthError);
+  const setLlmHealthError = useAgentStore((s) => s.setLlmHealthError);
   const updateSessionModel = useSessionStore((s) => s.updateSessionModel);
   const updateSessionCloudProvider = useSessionStore((s) => s.updateSessionCloudProvider);
   const updateSessionGcloudPreflight = useSessionStore((s) => s.updateSessionGcloudPreflight);
@@ -247,6 +251,9 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
     sessionId
       ? s.sessions.find((session) => session.id === sessionId)?.outputPolicy ?? DEFAULT_OUTPUT_POLICY
       : DEFAULT_OUTPUT_POLICY
+  ));
+  const currentSessionMeta = useSessionStore((s) => (
+    sessionId ? s.sessions.find((session) => session.id === sessionId) : undefined
   ));
   const [awaitingTopUp, setAwaitingTopUp] = useState(false);
   const [modelSwitchError, setModelSwitchError] = useState<string | null>(null);
@@ -455,6 +462,14 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
     setModelAnchorEl(null);
   };
 
+  useEffect(() => {
+    const openModelSelector = () => {
+      if (modelButtonRef.current) setModelAnchorEl(modelButtonRef.current);
+    };
+    window.addEventListener('liga-open-model-selector', openModelSelector);
+    return () => window.removeEventListener('liga-open-model-selector', openModelSelector);
+  }, []);
+
   const handleProviderClick = (event: React.MouseEvent<HTMLElement>) => {
     setProviderAnchorEl(event.currentTarget);
   };
@@ -548,6 +563,10 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
   const handleSelectModel = async (model: ModelOption) => {
     handleModelClose();
     if (!sessionId) return;
+    if (currentSessionMeta && isModelUnavailable(currentSessionMeta, model.modelPath)) {
+      setModelSwitchError(`${model.name} is unavailable in this session after a quota or billing failure. Select another model.`);
+      return;
+    }
     try {
       const res = await apiFetch(`/api/session/${sessionId}/model`, {
         method: 'POST',
@@ -556,6 +575,7 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
       if (res.ok) {
         setSelectedModelId(model.id);
         updateSessionModel(sessionId, model.modelPath);
+        setLlmHealthError(clearLlmErrorOnModelChange(llmHealthError, model.modelPath));
         setModelSwitchError(null);
         return;
       }
@@ -585,6 +605,7 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
       if (res.ok) {
         setSelectedModelId(free.id);
         updateSessionModel(sessionId, free.modelPath);
+        setLlmHealthError(clearLlmErrorOnModelChange(llmHealthError, free.modelPath));
         const retryText = lastSentRef.current;
         if (retryText) {
           onSend(retryText);
@@ -593,7 +614,7 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
         }
       }
     } catch { /* ignore */ }
-  }, [sessionId, onSend, setClaudeQuotaExhausted, modelOptions, updateSessionModel]);
+  }, [sessionId, onSend, setClaudeQuotaExhausted, modelOptions, updateSessionModel, setLlmHealthError, llmHealthError]);
 
   const handlePremiumUpgradeClick = useCallback(async () => {
     if (!sessionId) return;
@@ -924,6 +945,7 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
         {/* Model and training backend selectors */}
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mt: 1.5, gap: 1.5, flexWrap: 'wrap' }}>
           <Box
+            ref={modelButtonRef}
             onClick={handleModelClick}
             sx={{
               display: 'flex',
@@ -1048,11 +1070,14 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
             }
           }}
         >
-          {modelOptions.map((model) => (
+          {modelOptions.map((model) => {
+            const unavailable = currentSessionMeta ? isModelUnavailable(currentSessionMeta, model.modelPath) : false;
+            return (
             <MenuItem
               key={model.id}
               onClick={() => handleSelectModel(model)}
               selected={selectedModelId === model.id}
+              disabled={unavailable}
               sx={{
                 py: 1.5,
                 '&.Mui-selected': {
@@ -1097,6 +1122,19 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
                         }}
                       />
                     )}
+                    {unavailable && (
+                      <Chip
+                        label="Unavailable"
+                        size="small"
+                        sx={{
+                          height: '18px',
+                          fontSize: '10px',
+                          bgcolor: 'rgba(224,90,79,0.14)',
+                          color: 'var(--accent-red)',
+                          fontWeight: 600,
+                        }}
+                      />
+                    )}
                   </Box>
                 }
                 secondary={model.description}
@@ -1105,7 +1143,8 @@ export default function ChatInput({ sessionId, initialModelPath, onSend, onStop,
                 }}
               />
             </MenuItem>
-          ))}
+            );
+          })}
         </Menu>
 
         {/* GCloud Training Goal Menu */}

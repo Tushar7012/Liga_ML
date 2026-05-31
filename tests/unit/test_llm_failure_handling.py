@@ -149,15 +149,14 @@ async def test_provider_quota_failure_emits_visible_retryable_error(monkeypatch)
     assert "quota" in message.lower() or "billing" in message.lower()
     assert "switch" in message.lower()
     assert any(
-        event.event_type == "error"
-        and (event.data or {}).get("error_type") == "quota_or_billing"
+        event.event_type == "error" and (event.data or {}).get("error_type") == "quota"
         for event in events
     )
     assert not any(event.event_type == "turn_complete" for event in events)
 
 
 @pytest.mark.asyncio
-async def test_provider_spending_limit_failure_is_quota_or_billing(monkeypatch):
+async def test_provider_spending_limit_failure_is_quota(monkeypatch):
     session = _session()
 
     async def fake_call_llm_non_streaming(session, messages, tools, llm_params):
@@ -185,8 +184,7 @@ async def test_provider_spending_limit_failure_is_quota_or_billing(monkeypatch):
     assert "quota" in message.lower() or "billing" in message.lower()
     assert "spending limit" in message.lower()
     assert any(
-        event.event_type == "error"
-        and (event.data or {}).get("error_type") == "quota_or_billing"
+        event.event_type == "error" and (event.data or {}).get("error_type") == "quota"
         for event in events
     )
 

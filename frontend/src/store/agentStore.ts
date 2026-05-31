@@ -17,6 +17,13 @@
  */
 import { create } from 'zustand';
 import type { User } from '@/types/agent';
+import {
+  buildLlmErrorRecord,
+  clearLlmErrorOnNewPrompt,
+  clearLlmErrorOnSuccessfulRequest,
+  type LLMErrorInput,
+  type LLMErrorRecord,
+} from '@/lib/llm-error-recovery';
 
 export interface PlanItem {
   id: string;
@@ -39,11 +46,7 @@ export interface PanelData {
 
 export type PanelView = 'script' | 'output';
 
-export interface LLMHealthError {
-  error: string;
-  errorType: 'auth' | 'credits' | 'rate_limit' | 'network' | 'unknown';
-  model: string;
-}
+export type LLMHealthError = LLMErrorRecord;
 
 export interface JobsUpgradeState {
   message: string;
@@ -184,6 +187,9 @@ interface AgentStore {
   setActivityStatus: (status: ActivityStatus) => void;
   setUser: (user: User | null) => void;
   setLlmHealthError: (error: LLMHealthError | null) => void;
+  reportLlmHealthError: (error: LLMErrorInput) => LLMHealthError;
+  clearLlmErrorForNewRequest: (sessionId: string, requestId: string) => void;
+  clearLlmErrorForSuccessfulRequest: (sessionId: string, requestId?: string | null) => void;
   setClaudeQuotaExhausted: (exhausted: boolean) => void;
   setJobsUpgradeRequired: (state: JobsUpgradeState | null) => void;
 
@@ -422,6 +428,17 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
   setActivityStatus: (status) => set({ activityStatus: status }),
   setUser: (user) => set({ user }),
   setLlmHealthError: (error) => set({ llmHealthError: error }),
+  reportLlmHealthError: (error) => {
+    const record = buildLlmErrorRecord(error);
+    set({ llmHealthError: record });
+    return record;
+  },
+  clearLlmErrorForNewRequest: (sessionId, requestId) => set((state) => ({
+    llmHealthError: clearLlmErrorOnNewPrompt(state.llmHealthError, sessionId, requestId),
+  })),
+  clearLlmErrorForSuccessfulRequest: (sessionId, requestId) => set((state) => ({
+    llmHealthError: clearLlmErrorOnSuccessfulRequest(state.llmHealthError, sessionId, requestId),
+  })),
   setClaudeQuotaExhausted: (exhausted) => set({ claudeQuotaExhausted: exhausted }),
   setJobsUpgradeRequired: (state) => set({ jobsUpgradeRequired: state }),
 

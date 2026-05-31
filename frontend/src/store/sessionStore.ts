@@ -5,6 +5,7 @@ import type {
   OutputPolicy,
   SessionMeta,
   TrainingGoal,
+  UnavailableModelInfo,
   UploadedDatasetInfo,
 } from '@/types/agent';
 import { DEFAULT_OUTPUT_POLICY, DEFAULT_TRAINING_GOAL } from '@/lib/gcloud-preflight';
@@ -22,6 +23,7 @@ interface SessionStore {
   setSessionActive: (id: string, isActive: boolean) => void;
   updateSessionTitle: (id: string, title: string) => void;
   updateSessionModel: (id: string, model: string | null) => void;
+  markSessionModelUnavailable: (id: string, model: string, unavailable: UnavailableModelInfo) => void;
   updateSessionCloudProvider: (id: string, provider: CloudProviderId) => void;
   updateSessionGcloudPreflight: (id: string, values: {
     trainingGoal?: TrainingGoal;
@@ -86,6 +88,7 @@ export const useSessionStore = create<SessionStore>()(
           autoApprovalEstimatedSpendUsd: 0,
           autoApprovalRemainingUsd: null,
           uploadedDatasets: [],
+          unavailableModels: {},
         };
         set((state) => ({
           sessions: [...state.sessions, newSession],
@@ -144,6 +147,7 @@ export const useSessionStore = create<SessionStore>()(
                 needsAttention: Boolean(server.pending_approval?.length) || existing.needsAttention,
                 expired: false,
                 uploadedDatasets: server.uploaded_datasets ?? existing.uploadedDatasets ?? [],
+                unavailableModels: existing.unavailableModels ?? {},
                 ...(auto
                   ? {
                       autoApprovalEnabled: Boolean(auto.enabled),
@@ -174,6 +178,7 @@ export const useSessionStore = create<SessionStore>()(
               autoApprovalEstimatedSpendUsd: server.auto_approval?.estimated_spend_usd ?? 0,
               autoApprovalRemainingUsd: server.auto_approval?.remaining_usd ?? null,
               uploadedDatasets: server.uploaded_datasets ?? [],
+              unavailableModels: {},
             };
             merged.push(newSession);
             byId.set(id, newSession);
@@ -242,6 +247,22 @@ export const useSessionStore = create<SessionStore>()(
         set((state) => ({
           sessions: state.sessions.map((s) =>
             s.id === id ? { ...s, model } : s
+          ),
+        }));
+      },
+
+      markSessionModelUnavailable: (id, model, unavailable) => {
+        set((state) => ({
+          sessions: state.sessions.map((s) =>
+            s.id === id
+              ? {
+                  ...s,
+                  unavailableModels: {
+                    ...(s.unavailableModels ?? {}),
+                    [model]: unavailable,
+                  },
+                }
+              : s
           ),
         }));
       },

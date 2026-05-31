@@ -370,8 +370,10 @@ async def llm_health_check() -> LLMHealthResponse:
             or "quota" in err_str
             or "insufficient" in err_str
             or "billing" in err_str
+            or "spending limit" in err_str
+            or "monthly spending" in err_str
         ):
-            error_type = "credits"
+            error_type = "quota"
         elif "429" in err_str or "rate" in err_str:
             error_type = "rate_limit"
         elif "timeout" in err_str or "connect" in err_str or "network" in err_str:

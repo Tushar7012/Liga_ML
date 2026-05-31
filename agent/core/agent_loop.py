@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -792,10 +793,10 @@ def _llm_error_type(error: Exception) -> str:
         )
     ):
         if any(pattern in err_str for pattern in quota_billing_patterns):
-            return "quota_or_billing"
+            return "quota"
         return "auth"
     if any(pattern in err_str for pattern in quota_billing_patterns):
-        return "quota_or_billing"
+        return "quota"
     if _is_rate_limit_error(error):
         return "rate_limit"
     if any(
@@ -825,7 +826,7 @@ def _llm_failure_message(
 
     error_type = _llm_error_type(error)
     raw = str(error).strip()
-    if error_type == "quota_or_billing":
+    if error_type == "quota":
         message = (
             "The selected model provider rejected the request because of quota, "
             "billing, or credits. Switch to another model, or fix the provider "
@@ -965,6 +966,12 @@ async def _emit_visible_error(
                 "error": message,
                 "error_type": error_type,
                 "model": model_name or session.config.model_name,
+                "session_id": session.session_id,
+                "turn_id": session.turn_count,
+                "timestamp": datetime.now(UTC).isoformat(),
+                "transient": error_type
+                in {"rate_limit", "network", "empty_response", "unknown"},
+                "active": True,
             },
         )
     )

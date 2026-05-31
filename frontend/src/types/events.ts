@@ -97,4 +97,13 @@ export interface CompactedEventData {
 
 export interface ErrorEventData {
   error: string;
+  error_type?: 'quota' | 'billing' | 'auth' | 'rate_limit' | 'network' | 'empty_response' | 'unknown' | string;
+  model?: string;
+  provider?: string | null;
+  session_id?: string;
+  request_id?: string;
+  turn_id?: string | number;
+  timestamp?: string;
+  transient?: boolean;
+  active?: boolean;
 }
