@@ -90,6 +90,9 @@ class TrainingPlannerTool:
             dataset_summary=params.get("dataset_summary")
             if isinstance(params.get("dataset_summary"), dict)
             else None,
+            uploaded_dataset_available=params.get("uploaded_dataset_available")
+            if isinstance(params.get("uploaded_dataset_available"), bool)
+            else None,
             task_type=str(params.get("task_type") or "sft"),
             privacy_level=str(params.get("privacy_level") or "unknown"),
             budget_preference=str(params.get("budget_preference") or "balanced"),
@@ -144,6 +147,10 @@ TRAINING_PLANNER_TOOL_SPEC = {
                     },
                     "source_format": {"type": "string"},
                 },
+            },
+            "uploaded_dataset_available": {
+                "type": "boolean",
+                "description": "Whether an uploaded normalized dataset is already available in session context. If false and no dataset summary exists, dataset discovery is required before final planning.",
             },
             "task_type": {
                 "type": "string",

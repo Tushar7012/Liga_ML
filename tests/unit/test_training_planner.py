@@ -139,3 +139,17 @@ def test_user_model_preference_is_respected_with_risk_notes():
     assert any(
         "large" in risk.lower() or "unknown" in risk.lower() for risk in plan.risks
     )
+
+
+def test_missing_dataset_summary_requires_dataset_discovery():
+    plan = recommend_training_plan(
+        provider="gcp-vertex",
+        domain="medical",
+        training_goal="production",
+        dataset_summary=None,
+        privacy_level="sensitive",
+    )
+
+    combined = " ".join(plan.risks + plan.reasoning).lower()
+    assert "dataset discovery" in combined
+    assert "before final training plan" in combined

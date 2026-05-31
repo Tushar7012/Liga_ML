@@ -34,6 +34,24 @@ async def test_training_planner_recommend_operation_returns_markdown_plan():
 
 
 @pytest.mark.asyncio
+async def test_training_planner_no_dataset_available_guides_discovery_first():
+    output, ok = await training_planner_handler(
+        {
+            "operation": "recommend",
+            "provider": "aws-sagemaker",
+            "domain": "finance",
+            "training_goal": "production",
+            "uploaded_dataset_available": False,
+        }
+    )
+
+    assert ok is True
+    assert "dataset discovery is required" in output.lower()
+    assert "dataset_discovery" in output
+    assert "do not launch" in output.lower()
+
+
+@pytest.mark.asyncio
 async def test_training_planner_unknown_operation_returns_clear_error():
     output, ok = await training_planner_handler({"operation": "launch"})
 

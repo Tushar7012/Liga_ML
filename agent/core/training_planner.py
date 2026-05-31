@@ -272,6 +272,7 @@ def recommend_training_plan(
     domain: str = "general",
     training_goal: str = "agent-decide",
     dataset_summary: dict[str, Any] | None = None,
+    uploaded_dataset_available: bool | None = None,
     task_type: str = "sft",
     privacy_level: str = "unknown",
     budget_preference: str = "balanced",
@@ -298,6 +299,14 @@ def recommend_training_plan(
     if user_model_preference:
         recommended_model = user_model_preference.strip()
         risks.extend(_model_risks(recommended_model, goal))
+
+    if uploaded_dataset_available is False or rows is None:
+        risks.append(
+            "No training dataset summary is available; dataset discovery is required before final training plan approval."
+        )
+        reasoning.append(
+            "Run dataset_discovery first, then search allowed public sources, inspect schema/license/privacy, and do not launch a cloud job until the user selects a dataset."
+        )
 
     if normalized_provider not in SUPPORTED_PROVIDERS:
         risks.append(

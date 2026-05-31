@@ -14,3 +14,12 @@ def test_prompt_keeps_kaggle_as_future_work_not_download_source():
 
     assert "Kaggle is future work" in prompt
     assert "Do not rely on Kaggle downloads" in prompt
+
+
+def test_prompt_uses_dataset_discovery_for_no_upload_training():
+    prompt = Path("agent/prompts/system_prompt_v3.yaml").read_text()
+
+    assert "For fine-tuning requests, check uploaded session data first" in prompt
+    assert "dataset_discovery" in prompt
+    assert "no uploaded dataset exists" in prompt
+    assert "ask the user to approve/select" in prompt

@@ -13,6 +13,10 @@ from fastmcp.exceptions import ToolError
 from mcp.types import EmbeddedResource, ImageContent, TextContent
 
 from agent.config import MCPServerConfig
+from agent.tools.dataset_discovery_tool import (
+    DATASET_DISCOVERY_TOOL_SPEC,
+    dataset_discovery_handler,
+)
 from agent.tools.dataset_tools import (
     HF_INSPECT_DATASET_TOOL_SPEC,
     hf_inspect_dataset_handler,
@@ -341,6 +345,12 @@ def create_builtin_tools(local_mode: bool = False) -> list[ToolSpec]:
             description=HF_INSPECT_DATASET_TOOL_SPEC["description"],
             parameters=HF_INSPECT_DATASET_TOOL_SPEC["parameters"],
             handler=hf_inspect_dataset_handler,
+        ),
+        ToolSpec(
+            name=DATASET_DISCOVERY_TOOL_SPEC["name"],
+            description=DATASET_DISCOVERY_TOOL_SPEC["description"],
+            parameters=DATASET_DISCOVERY_TOOL_SPEC["parameters"],
+            handler=dataset_discovery_handler,
         ),
         # Planning and job management tools
         ToolSpec(
