@@ -22,6 +22,8 @@ import { useSessionStore } from '@/store/sessionStore';
 import { useLayoutStore } from '@/store/layoutStore';
 import { logger } from '@/utils/logger';
 import { appendTrainingResultSummary, buildVertexStateMarkdown, createVertexRunPanel } from '@/lib/vertex-job-panel';
+import { createTrainingPlannerPanel } from '@/lib/training-planner-panel';
+import { createDatasetDiscoveryPanel } from '@/lib/dataset-discovery-panel';
 import type { ToolStateChangeEventData } from '@/types/events';
 
 interface UseAgentChatOptions {
@@ -38,6 +40,26 @@ function appendPanelOutput(existing: string, next: string): string {
   if (!existing) return next;
   if (!next) return existing;
   return `${existing}\n${next}`;
+}
+
+function createPreflightPanelData(toolName: string, output: unknown, args?: Record<string, unknown>) {
+  if (toolName === 'training_planner') {
+    const panel = createTrainingPlannerPanel(output ?? args ?? {});
+    return {
+      title: 'Training Planner',
+      output: { content: panel.markdown, language: 'markdown' },
+      ...(args ? { input: { content: JSON.stringify(args, null, 2), language: 'json' } } : {}),
+    };
+  }
+  if (toolName === 'dataset_discovery') {
+    const panel = createDatasetDiscoveryPanel(output ?? args ?? {});
+    return {
+      title: 'Dataset Discovery',
+      output: { content: panel.markdown, language: 'markdown' },
+      ...(args ? { input: { content: JSON.stringify(args, null, 2), language: 'json' } } : {}),
+    };
+  }
+  return null;
 }
 
 export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionDead }: UseAgentChatOptions) {
@@ -251,6 +273,11 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
               parameters: firstTool.arguments as Record<string, unknown>,
             },
           };
+        } else if (firstTool.tool === 'training_planner' || firstTool.tool === 'dataset_discovery') {
+          panelUpdate = {
+            panelData: createPreflightPanelData(firstTool.tool, null, firstTool.arguments as Record<string, unknown>),
+            panelView: 'output' as const,
+          };
         } else {
           panelUpdate = {
             panelData: {
@@ -305,6 +332,15 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
             useLayoutStore.getState().setRightPanelOpen(true);
             useLayoutStore.getState().setLeftSidebarOpen(false);
           }
+        } else if (toolName === 'training_planner' || toolName === 'dataset_discovery') {
+          updateSession(sessionId, {
+            panelData: createPreflightPanelData(toolName, null, args),
+            panelView: 'output',
+          });
+          if (isActiveRef.current) {
+            useLayoutStore.getState().setRightPanelOpen(true);
+            useLayoutStore.getState().setLeftSidebarOpen(false);
+          }
         } else if (toolName === 'bash' && args.command) {
           updateSession(sessionId, {
             panelData: {
@@ -331,6 +367,15 @@ export function useAgentChat({ sessionId, isActive, onReady, onError, onSessionD
               ? { ...sessState.panelData, output: { content, language: 'markdown' } }
               : { title: 'Vertex AI Job Output', output: { content, language: 'markdown' } },
             panelView: !success ? 'output' : sessState.panelView,
+            panelEditable: false,
+          });
+          if (isActiveRef.current && !useLayoutStore.getState().isRightPanelOpen) {
+            useLayoutStore.getState().setRightPanelOpen(true);
+          }
+        } else if ((toolName === 'training_planner' || toolName === 'dataset_discovery') && output) {
+          updateSession(sessionId, {
+            panelData: createPreflightPanelData(toolName, output),
+            panelView: 'output',
             panelEditable: false,
           });
           if (isActiveRef.current && !useLayoutStore.getState().isRightPanelOpen) {

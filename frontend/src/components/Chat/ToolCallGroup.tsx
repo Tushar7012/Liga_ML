@@ -13,6 +13,8 @@ import { logger } from '@/utils/logger';
 import { RESEARCH_MAX_STEPS } from '@/lib/research-store';
 import { appendTrainingResultSummary, buildVertexStateMarkdown, createVertexRunPanel } from '@/lib/vertex-job-panel';
 import { storageDestinationLabel, trainingGoalLabel } from '@/lib/gcloud-preflight';
+import { createTrainingPlannerPanel } from '@/lib/training-planner-panel';
+import { createDatasetDiscoveryPanel } from '@/lib/dataset-discovery-panel';
 import type { OutputPolicy, TrainingGoal } from '@/types/agent';
 import type { UIMessage } from 'ai';
 
@@ -484,6 +486,30 @@ function statusColor(state: ToolPartState): string {
   }
 }
 
+function createPreflightPanel(
+  toolName: string,
+  output: unknown,
+  input?: Record<string, unknown>,
+) {
+  if (toolName === 'training_planner') {
+    const panel = createTrainingPlannerPanel(output ?? input ?? {});
+    return {
+      title: 'Training Planner',
+      output: { content: panel.markdown, language: 'markdown' },
+      ...(input ? { input: { content: JSON.stringify(input, null, 2), language: 'json' } } : {}),
+    };
+  }
+  if (toolName === 'dataset_discovery') {
+    const panel = createDatasetDiscoveryPanel(output ?? input ?? {});
+    return {
+      title: 'Dataset Discovery',
+      output: { content: panel.markdown, language: 'markdown' },
+      ...(input ? { input: { content: JSON.stringify(input, null, 2), language: 'json' } } : {}),
+    };
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Inline approval UI (per-tool)
 // ---------------------------------------------------------------------------
@@ -876,6 +902,10 @@ export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProp
         displayMap[t.toolCallId] = 'research';
       } else if (t.toolName === 'gcp_vertex_jobs') {
         displayMap[t.toolCallId] = 'Vertex AI Job';
+      } else if (t.toolName === 'training_planner') {
+        displayMap[t.toolCallId] = 'Training Planner';
+      } else if (t.toolName === 'dataset_discovery') {
+        displayMap[t.toolCallId] = 'Dataset Discovery';
       }
     }
     return { scriptLabelMap: scriptMap, toolDisplayMap: displayMap };
@@ -1019,9 +1049,15 @@ export default function ToolCallGroup({ tools, approveTools }: ToolCallGroupProp
         }
       }
 
-      const inputSection = args ? { content: JSON.stringify(args, null, 2), language: 'json' } : undefined;
-
       const outputText = tool.output ?? (tool.state === 'output-error' ? (tool as Record<string, unknown>).errorText : undefined);
+      const planningPanel = createPreflightPanel(tool.toolName, outputText, args);
+      if (planningPanel) {
+        setPanel(planningPanel, 'output');
+        setRightPanelOpen(true);
+        return;
+      }
+
+      const inputSection = args ? { content: JSON.stringify(args, null, 2), language: 'json' } : undefined;
 
       const hasCompleted = tool.state === 'output-available' || tool.state === 'output-error' || tool.state === 'output-denied';
 

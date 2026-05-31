@@ -13,6 +13,10 @@ from fastmcp.exceptions import ToolError
 from mcp.types import EmbeddedResource, ImageContent, TextContent
 
 from agent.config import MCPServerConfig
+from agent.tools.dataset_discovery_tool import (
+    DATASET_DISCOVERY_TOOL_SPEC,
+    dataset_discovery_handler,
+)
 from agent.tools.dataset_tools import (
     HF_INSPECT_DATASET_TOOL_SPEC,
     hf_inspect_dataset_handler,
@@ -53,6 +57,10 @@ from agent.tools.papers_tool import HF_PAPERS_TOOL_SPEC, hf_papers_handler
 from agent.tools.plan_tool import PLAN_TOOL_SPEC, plan_tool_handler
 from agent.tools.research_tool import RESEARCH_TOOL_SPEC, research_handler
 from agent.tools.sandbox_tool import get_sandbox_tools
+from agent.tools.training_planner_tool import (
+    TRAINING_PLANNER_TOOL_SPEC,
+    training_planner_handler,
+)
 from agent.tools.web_search_tool import WEB_SEARCH_TOOL_SPEC, web_search_handler
 
 # NOTE: Private HF repo tool disabled - replaced by hf_repo_files and hf_repo_git
@@ -338,12 +346,24 @@ def create_builtin_tools(local_mode: bool = False) -> list[ToolSpec]:
             parameters=HF_INSPECT_DATASET_TOOL_SPEC["parameters"],
             handler=hf_inspect_dataset_handler,
         ),
+        ToolSpec(
+            name=DATASET_DISCOVERY_TOOL_SPEC["name"],
+            description=DATASET_DISCOVERY_TOOL_SPEC["description"],
+            parameters=DATASET_DISCOVERY_TOOL_SPEC["parameters"],
+            handler=dataset_discovery_handler,
+        ),
         # Planning and job management tools
         ToolSpec(
             name=PLAN_TOOL_SPEC["name"],
             description=PLAN_TOOL_SPEC["description"],
             parameters=PLAN_TOOL_SPEC["parameters"],
             handler=plan_tool_handler,
+        ),
+        ToolSpec(
+            name=TRAINING_PLANNER_TOOL_SPEC["name"],
+            description=TRAINING_PLANNER_TOOL_SPEC["description"],
+            parameters=TRAINING_PLANNER_TOOL_SPEC["parameters"],
+            handler=training_planner_handler,
         ),
         ToolSpec(
             name=NOTIFY_TOOL_SPEC["name"],

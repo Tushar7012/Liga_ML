@@ -1,4 +1,8 @@
 import type { CloudProviderId, OutputPolicy, TrainingGoal } from '../types/agent.js';
+import {
+  outputPolicyLabel as sharedOutputPolicyLabel,
+  storageDestinationLabel as sharedStorageDestinationLabel,
+} from './output-policy.js';
 
 export const DEFAULT_TRAINING_GOAL: TrainingGoal = 'agent-decide';
 export const DEFAULT_OUTPUT_POLICY: OutputPolicy = 'cloud-and-hf-hub';
@@ -16,9 +20,12 @@ export const OUTPUT_POLICY_OPTIONS: Array<{
   value: OutputPolicy;
   label: string;
 }> = [
-  { value: 'cloud-private', label: 'Google Cloud Storage only' },
-  { value: 'hf-hub', label: 'Hugging Face Hub only' },
-  { value: 'cloud-and-hf-hub', label: 'Both Google Cloud Storage and Hugging Face Hub' },
+  { value: 'cloud-private', label: sharedOutputPolicyLabel('gcp-vertex', 'cloud-private') },
+  { value: 'hf-hub', label: sharedOutputPolicyLabel('gcp-vertex', 'hf-hub') },
+  {
+    value: 'cloud-and-hf-hub',
+    label: sharedOutputPolicyLabel('gcp-vertex', 'cloud-and-hf-hub'),
+  },
 ];
 
 export function trainingGoalLabel(value: TrainingGoal | undefined): string {
@@ -32,15 +39,7 @@ export function outputPolicyLabel(value: OutputPolicy | undefined): string {
 }
 
 export function storageDestinationLabel(value: OutputPolicy | undefined): string {
-  switch (value) {
-    case 'cloud-private':
-      return 'Google Cloud Storage only';
-    case 'hf-hub':
-      return 'Hugging Face Hub only';
-    case 'cloud-and-hf-hub':
-    default:
-      return 'Google Cloud Storage and Hugging Face Hub';
-  }
+  return sharedStorageDestinationLabel('gcp-vertex', value ?? DEFAULT_OUTPUT_POLICY);
 }
 
 export function buildGcloudChatRequestMetadata({

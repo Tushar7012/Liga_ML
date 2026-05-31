@@ -139,6 +139,7 @@ class Session:
         self.auto_approval_enabled: bool = False
         self.auto_approval_cost_cap_usd: float | None = None
         self.auto_approval_estimated_spend_usd: float = 0.0
+        self.uploaded_datasets: list[dict[str, Any]] = []
 
         # Session trajectory logging
         self.logged_events: list[dict] = []

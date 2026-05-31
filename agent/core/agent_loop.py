@@ -83,6 +83,52 @@ def _no_tool_incomplete_plan_prompt(items: list[dict[str, str]]) -> str:
     )
 
 
+def _uploaded_dataset_instruction(session: Session) -> str | None:
+    uploads = [
+        upload
+        for upload in (getattr(session, "uploaded_datasets", []) or [])
+        if isinstance(upload, dict)
+    ]
+    if not uploads:
+        return None
+    latest = uploads[-1]
+    required_fields = ("config_name", "repo_id", "normalized_row_count")
+    missing_fields = [
+        field for field in required_fields if latest.get(field) in {None, ""}
+    ]
+    supports_training = latest.get("supports_training", True)
+    named = ", ".join(
+        str(upload.get("filename"))
+        for upload in uploads
+        if isinstance(upload.get("filename"), str)
+    )
+    incomplete_note = ""
+    if missing_fields or supports_training is False or latest.get("status") == "failed":
+        missing = (
+            ", ".join(missing_fields) if missing_fields else "training-ready status"
+        )
+        incomplete_note = (
+            " The uploaded dataset metadata is incomplete or not training-ready "
+            f"({missing}); explain the missing dataset requirements and ask for "
+            "the missing dataset details before launching training."
+        )
+    return (
+        "The user has uploaded data for this session. For fine-tuning or "
+        "training requests, first inspect and use the uploaded normalized "
+        "dataset config. Prefer the latest upload unless the user mentions one "
+        f"by name. Latest upload: filename={latest.get('filename')}, "
+        f"source_format={latest.get('source_format')}, "
+        f"dataset_config={latest.get('config_name')}, "
+        f"normalized_rows={latest.get('normalized_row_count')}, "
+        f"repo_id={latest.get('repo_id')}. "
+        "Use the normalized dataset config for training. Do not ask for a "
+        "local file path. Do not ask the user to upload again unless the "
+        "dataset load fails."
+        + incomplete_note
+        + (f" Available uploads: {named}." if named else "")
+    )
+
+
 def _malformed_tool_name(message: Message) -> str | None:
     """Return the tool name for malformed-json tool-result messages."""
     if getattr(message, "role", None) != "tool":
@@ -2327,6 +2373,11 @@ async def process_submission(session: Session, submission) -> bool:
                     role="user",
                     content=f"[SYSTEM: {provider_instruction}]",
                 )
+            )
+        upload_instruction = _uploaded_dataset_instruction(session)
+        if upload_instruction:
+            session.context_manager.add_message(
+                Message(role="user", content=f"[SYSTEM: {upload_instruction}]")
             )
         await Handlers.run_agent(session, text)
         return True

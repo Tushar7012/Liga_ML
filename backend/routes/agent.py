@@ -29,6 +29,7 @@ from starlette.datastructures import FormData, UploadFile
 from dataset_uploads import (
     MAX_DATASET_UPLOAD_BYTES,
     dataset_context_note,
+    dataset_session_metadata,
     push_dataset_upload_to_hub,
 )
 from models import (
@@ -752,6 +753,11 @@ async def upload_session_dataset(
         )
         agent_session.session.context_manager.add_message(
             Message(role="user", content=dataset_context_note(uploaded))
+        )
+        if not hasattr(agent_session.session, "uploaded_datasets"):
+            agent_session.session.uploaded_datasets = []
+        agent_session.session.uploaded_datasets.append(
+            dataset_session_metadata(uploaded)
         )
         await session_manager.persist_session_snapshot(agent_session)
         logger.info(
