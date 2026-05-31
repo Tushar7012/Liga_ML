@@ -1965,9 +1965,21 @@ class Handlers:
                             return (tc, name, args, err, False)
                         if decision.billable:
                             _record_estimated_spend(session, decision)
-                        out, ok = await session.tool_router.call_tool(
-                            name, args, session=session, tool_call_id=tc.id
-                        )
+                        try:
+                            out, ok = await session.tool_router.call_tool(
+                                name, args, session=session, tool_call_id=tc.id
+                            )
+                        except Exception as exc:
+                            logger.exception(
+                                "Tool call %s failed without returning an error",
+                                name,
+                            )
+                            out = (
+                                f"Tool error: {type(exc).__name__}: {exc}. "
+                                "Continue with the available successful tool outputs "
+                                "or retry this tool only if it is required."
+                            )
+                            ok = False
                         return (tc, name, args, out, ok)
 
                     gather_task = asyncio.ensure_future(
