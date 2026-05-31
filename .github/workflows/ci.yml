@@ -70,3 +70,23 @@ jobs:
       - name: Run training result parser tests
         working-directory: frontend
         run: npm run test:training-result
+
+      - name: Run cloud provider tests
+        working-directory: frontend
+        run: npm run test:cloud-providers
+
+      - name: Run dataset upload UI tests
+        working-directory: frontend
+        run: npm run test:dataset-upload-ui
+
+      - name: Run output policy tests
+        working-directory: frontend
+        run: npm run test:output-policy
+
+      - name: Run training planner panel tests
+        working-directory: frontend
+        run: npm run test:training-planner-panel
+
+      - name: Run dataset discovery panel tests
+        working-directory: frontend
+        run: npm run test:dataset-discovery-panel
